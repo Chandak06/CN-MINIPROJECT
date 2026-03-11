@@ -3,7 +3,7 @@ import time          # Used to record timestamps T1 and T4 with high precision
 import json          # Used to parse the JSON response received from the server
 import statistics    # Used to compute the mean (average) of collected offsets
 
-SERVER_IP = "127.0.0.1"   # IP address of the NTP server to synchronize with
+SERVER_IP = "192.168.56.1"   # LAN IP of the server machine — change this if the server's IP changes
 SERVER_PORT = 5005         # UDP port the server is listening on
 BUFFER_SIZE = 1024         # Maximum bytes to read from a single server response
 NUM_SYNCS = 10             # Number of synchronization rounds to perform

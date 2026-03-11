@@ -6,7 +6,7 @@ import time          # Used to record timestamps T2 and T3 with high precision
 import json          # Used to serialize the response dictionary to a JSON string
 import random        # Used to simulate a random processing delay between T2 and T3
 
-HOST = "127.0.0.1"  # Bind to localhost; only accepts local connections
+HOST = "0.0.0.0"   # Bind to all network interfaces so clients on other devices can reach this server
 PORT = 6000          # TCP port for the secure (TLS) server — different from the plain server (5005)
 BUFFER_SIZE = 1024   # Maximum bytes to read in a single recv() call
 

@@ -4,7 +4,7 @@ import json          # Used to encode the response dictionary into a string for 
 import threading     # Allows handling multiple clients at the same time using threads
 import random        # Used to simulate a random processing delay between T2 and T3
 
-HOST = "127.0.0.1"  # Server binds to localhost (loopback); only accepts connections from the same machine
+HOST = "0.0.0.0"   # Bind to all network interfaces so clients on other devices can reach this server
 PORT = 5005          # UDP port the server listens on
 BUFFER_SIZE = 1024   # Maximum bytes to read from a single UDP datagram
 

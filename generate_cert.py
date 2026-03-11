@@ -45,8 +45,9 @@ cert = (
         # Subject Alternative Name (SAN): specifies all hostnames/IPs this cert is valid for
         # Modern TLS libraries use SAN for hostname verification (CN alone is no longer sufficient)
         x509.SubjectAlternativeName([
-            x509.DNSName("localhost"),                              # Valid for DNS hostname "localhost"
-            x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),    # Valid for IP address 127.0.0.1
+            x509.DNSName("localhost"),                               # Valid for DNS hostname "localhost"
+            x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),     # Valid for loopback (same-machine testing)
+            x509.IPAddress(ipaddress.IPv4Address("192.168.56.1")),  # Valid for LAN IP (cross-device testing)
         ]),
         critical=False,   # SAN is informational; not critical means clients won't reject the cert if they don't understand it
     )
