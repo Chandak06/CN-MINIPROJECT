@@ -123,7 +123,12 @@ def run_client_session(client_id):
                 print(f"[Client {client_id}] Round {request_id} failed: {e}")
                 print("Hint: Start secure_server.py on the server device, verify IP/port, and allow TCP port in firewall.\n")
 
-        except (socket.timeout, ssl.SSLError, OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+        except socket.timeout as e:
+            with print_lock:
+                print(f"[Client {client_id}] Round {request_id} failed: {e}")
+                print("Hint: Timeout usually means unreachable server IP/port or blocked firewall.\n")
+
+        except (ssl.SSLError, OSError, json.JSONDecodeError, KeyError, ValueError) as e:
             with print_lock:
                 print(f"[Client {client_id}] Round {request_id} failed: {e}\n")
 
@@ -174,9 +179,11 @@ def run_client_session(client_id):
             print(f"[Client {client_id}] No successful synchronization rounds.\n")
 
 
-if num_clients == 1:
-    run_client_session(1)
-else:
+def main():
+    if num_clients == 1:
+        run_client_session(1)
+        return
+
     workers = []
     for client_id in range(1, num_clients + 1):
         thread = threading.Thread(target=run_client_session, args=(client_id,), daemon=False)
@@ -185,3 +192,12 @@ else:
 
     for worker in workers:
         worker.join()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nClient stopped by user.")
+    except Exception as e:
+        print(f"\nClient stopped due to unexpected error: {e}")
