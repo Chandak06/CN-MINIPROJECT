@@ -1,80 +1,64 @@
-import socket        # Provides low-level network interface (UDP/TCP sockets)
-import time          # Used to capture timestamps (T2, T3) with high precision
-import json          # Used to encode the response dictionary into a string for transmission
-import threading     # Allows handling multiple clients at the same time using threads
-import random        # Used to simulate a random processing delay between T2 and T3
+import json
+import random
+import socket
+import threading
+import time
 
-HOST = "0.0.0.0"   # Bind to all network interfaces so clients on other devices can reach this server
-PORT = 5005          # UDP port the server listens on
-BUFFER_SIZE = 1024   # Maximum bytes to read from a single UDP datagram
+HOST = "0.0.0.0"
+PORT = 5005
+BUFFER_SIZE = 1024
 
-# Create a UDP socket (SOCK_DGRAM = datagram, connectionless — no handshake needed)
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-# SO_REUSEADDR lets the server restart immediately without waiting for the OS to
-# release the port (avoids "Address already in use" error after a crash/restart)
 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-# Bind the socket to the host/port so it starts listening for incoming datagrams
 server_socket.bind((HOST, PORT))
 
 print("Distributed Clock Synchronization Server Running...")
 print(f"Listening on {HOST}:{PORT}\n")
 
 
-# This function runs in a separate thread for each client request
-# data  — the raw bytes received from the client
-# addr  — (ip, port) tuple identifying the client
-# T2    — the timestamp recorded the instant the datagram arrived (passed from main loop)
-def handle_client(data, addr, T2):
+def parse_request(data):
+    """Accept JSON requests and keep legacy TIME_REQUEST compatibility."""
     try:
-        # Decode the bytes to a string and check if it is a valid time request
-        if data.decode() == "TIME_REQUEST":
+        payload = json.loads(data.decode())
+        if payload.get("type") == "TIME_REQUEST":
+            return payload.get("id")
+        return None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        if data == b"TIME_REQUEST":
+            return None
+        return None
 
-            # Simulate a small random processing/network delay (1–5 ms)
-            # This mimics real-world server processing time between receiving and sending
-            time.sleep(random.uniform(0.001, 0.005))
 
-            # T3: record the exact time the server is about to send the response
-            T3 = time.time()
+def handle_client(data, addr, t2):
+    try:
+        request_id = parse_request(data)
+        if request_id is None and data != b"TIME_REQUEST":
+            return
 
-            # Build the response payload containing both server-side timestamps
-            # T2 = when the server received the request
-            # T3 = when the server sent the response
-            response = {
-                "T2": T2,
-                "T3": T3
-            }
+        time.sleep(random.uniform(0.001, 0.005))
+        t3 = time.time()
 
-            # Send the JSON-encoded response back to the specific client address
-            server_socket.sendto(json.dumps(response).encode(), addr)
-
-            print(f"Responded to {addr}")
+        response = {
+            "type": "TIME_REPLY",
+            "id": request_id,
+            "T2": t2,
+            "T3": t3,
+        }
+        server_socket.sendto(json.dumps(response).encode(), addr)
+        print(f"Responded to {addr} (id={request_id})")
 
     except Exception as e:
-        # Catch any unexpected errors (e.g. decode failure) and log them
-        # without crashing the thread or the entire server
         print(f"Error handling client {addr}: {e}")
 
 
-# Main loop: runs forever, waiting for incoming UDP datagrams
 while True:
-
-    # Block until a datagram arrives; returns the raw data and the sender's address
     data, addr = server_socket.recvfrom(BUFFER_SIZE)
-
-    # T2: capture the receive timestamp IMMEDIATELY after the datagram arrives,
-    # before any processing, decoding, or thread creation — this is the most accurate T2
-    T2 = time.time()
-
+    t2 = time.time()
     print(f"Request received from {addr}")
 
-    # Spawn a new thread to handle this client so the main loop can immediately
-    # go back to waiting for the next request (supports multiple simultaneous clients)
-    # daemon=True means the thread will be killed automatically when the main program exits
     client_thread = threading.Thread(
-        target=handle_client,   # Function the thread will execute
-        args=(data, addr, T2),  # Arguments passed to handle_client
-        daemon=True             # Thread dies with the main process (clean shutdown)
+        target=handle_client,
+        args=(data, addr, t2),
+        daemon=True,
     )
-    client_thread.start()       # Start the thread execution
+    client_thread.start()

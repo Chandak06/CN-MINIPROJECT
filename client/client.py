@@ -1,110 +1,124 @@
-import socket        # Provides UDP socket for sending and receiving datagrams
-import time          # Used to record timestamps T1 and T4 with high precision
-import json          # Used to parse the JSON response received from the server
-import statistics    # Used to compute the mean (average) of collected offsets
+import json
+import socket
+import statistics
+import time
 
-SERVER_IP = "192.168.56.1"   # LAN IP of the server machine — change this if the server's IP changes
-SERVER_PORT = 5005         # UDP port the server is listening on
-BUFFER_SIZE = 1024         # Maximum bytes to read from a single server response
-NUM_SYNCS = 10             # Number of synchronization rounds to perform
+SERVER_IP = "192.168.56.1"
+SERVER_PORT = 5005
+BUFFER_SIZE = 1024
+NUM_SYNCS = 10
+REQUEST_INTERVAL_SECONDS = 1
+SOCKET_TIMEOUT_SECONDS = 3
 
-# Create a UDP socket (SOCK_DGRAM = connectionless, no handshake)
-client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-# Set a 3-second timeout: if the server does not reply within 3 seconds,
-# a socket.timeout exception is raised so the round is skipped gracefully
-client_socket.settimeout(3)
-
-offsets = []   # Stores the calculated clock offset from each successful round
-delays  = []   # Stores the round-trip delay from each successful round
-
-# Simulated clock drift: pretend this client's clock is 0.5 seconds AHEAD of real time
-# This is added to T1 and T4 to mimic a client with an inaccurate local clock
 simulated_drift = 0.5
+
+
+def compute_drift_rate(samples):
+    """Estimate drift rate as slope(offset vs elapsed time) in seconds/second."""
+    if len(samples) < 2:
+        return 0.0
+
+    x = [item["elapsed"] for item in samples]
+    y = [item["offset"] for item in samples]
+    x_mean = statistics.mean(x)
+    y_mean = statistics.mean(y)
+
+    denominator = sum((value - x_mean) ** 2 for value in x)
+    if denominator == 0:
+        return 0.0
+
+    numerator = sum((x[i] - x_mean) * (y[i] - y_mean) for i in range(len(samples)))
+    return numerator / denominator
+
+
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+client_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
+
+samples = []
+session_start_monotonic = time.monotonic()
 
 print("Starting Clock Synchronization...\n")
 
-# Run NUM_SYNCS rounds of the NTP 4-timestamp exchange
 for i in range(NUM_SYNCS):
+    request_id = i + 1
 
     try:
-        # ── NTP Timestamp T1 ──────────────────────────────────────────────────
-        # T1 = client's local time (with drift applied) just before sending the request
-        # Adding simulated_drift mimics what a drifted clock would report
-        T1 = time.time() + simulated_drift
+        t1 = time.time() + simulated_drift
+        request = {"type": "TIME_REQUEST", "id": request_id, "T1": t1}
+        client_socket.sendto(json.dumps(request).encode(), (SERVER_IP, SERVER_PORT))
 
-        # Send the time request datagram to the server
-        client_socket.sendto(b"TIME_REQUEST", (SERVER_IP, SERVER_PORT))
-
-        # Block and wait for the server's response datagram (up to BUFFER_SIZE bytes)
         data, _ = client_socket.recvfrom(BUFFER_SIZE)
+        t4 = time.time() + simulated_drift
 
-        # ── NTP Timestamp T4 ──────────────────────────────────────────────────
-        # T4 = client's local time (with drift applied) immediately after receiving the reply
-        T4 = time.time() + simulated_drift
-
-        # Decode the JSON response and extract the two server-side timestamps
         response = json.loads(data.decode())
+        if response.get("type") != "TIME_REPLY":
+            raise ValueError("Invalid response type")
+        if response.get("id") != request_id:
+            raise ValueError("Mismatched response id")
 
-        T2 = response["T2"]   # Time the server received the request (from server clock)
-        T3 = response["T3"]   # Time the server sent the response  (from server clock)
+        t2 = response["T2"]
+        t3 = response["T3"]
 
-        # ── NTP Offset Formula ────────────────────────────────────────────────
-        # offset θ = ((T2 - T1) + (T3 - T4)) / 2
-        # Positive offset → client clock is BEHIND the server
-        # Negative offset → client clock is AHEAD of the server
-        offset = ((T2 - T1) + (T3 - T4)) / 2
+        offset = ((t2 - t1) + (t3 - t4)) / 2
+        delay = (t4 - t1) - (t3 - t2)
 
-        # ── NTP Round-Trip Delay Formula ──────────────────────────────────────
-        # delay δ = (T4 - T1) - (T3 - T2)
-        # Total elapsed time on client side minus processing time on server side
-        delay = (T4 - T1) - (T3 - T2)
+        sample = {
+            "round": request_id,
+            "offset": offset,
+            "delay": delay,
+            "elapsed": time.monotonic() - session_start_monotonic,
+        }
+        samples.append(sample)
 
-        offsets.append(offset)   # Store this round's offset for later analysis
-        delays.append(delay)     # Store this round's delay for later analysis
-
-        print(f"Round {i+1}")
+        print(f"Round {request_id}")
         print(f"Offset: {offset:.6f}")
         print(f"Delay : {delay:.6f}\n")
 
-        # Wait 1 second between rounds to avoid flooding the server
-        time.sleep(1)
+    except (socket.timeout, json.JSONDecodeError, KeyError, ValueError) as e:
+        print(f"Round {request_id} failed: {e}\n")
 
-    except socket.timeout:
-        # Server did not respond within 3 seconds; skip this round
-        print("Server timeout\n")
+    time.sleep(REQUEST_INTERVAL_SECONDS)
 
-# Close the UDP socket once all rounds are complete
 client_socket.close()
 
-# Only compute results if at least one round succeeded
-if offsets:
-
-    # The best offset estimate is the one from the round with the LOWEST delay
-    # A lower delay means less network jitter, so that sample is most accurate
+if samples:
+    offsets = [sample["offset"] for sample in samples]
+    delays = [sample["delay"] for sample in samples]
     min_delay_index = delays.index(min(delays))
     best_offset = offsets[min_delay_index]
+    drift_rate = compute_drift_rate(samples)
 
-    print("----- Synchronization Result -----")
-    print(f"Best Offset (min delay sample): {best_offset:.6f}")   # Most accurate offset
-    print(f"Average Offset: {statistics.mean(offsets):.6f}")       # Mean across all rounds
-    print(f"Minimum Delay: {min(delays):.6f}")                     # Lowest observed RTT
+    now_monotonic = time.monotonic()
+    elapsed_now = now_monotonic - session_start_monotonic
+    drift_corrected_offset = best_offset + (drift_rate * elapsed_now)
 
-    # ── Clock Correction ──────────────────────────────────────────────────────
-    # Apply the best_offset to the current drifted time to get the corrected time
-    # corrected_time ≈ true server time
-    corrected_time = (time.time() + simulated_drift) + best_offset
-
-    # real_time = what time.time() actually is (ground truth in this simulation)
+    drifted_now = time.time() + simulated_drift
+    corrected_time = drifted_now + drift_corrected_offset
     real_time = time.time()
 
-    # Error = how far off the corrected time is from the true time
-    # Ideally this should be very close to 0
-    error = abs(corrected_time - real_time)
+    baseline_error = abs(drifted_now - real_time)
+    corrected_error = abs(corrected_time - real_time)
+    improvement = 0.0
+    if baseline_error > 0:
+        improvement = ((baseline_error - corrected_error) / baseline_error) * 100
+
+    print("----- Synchronization Result -----")
+    print(f"Successful Rounds: {len(samples)}/{NUM_SYNCS}")
+    print(f"Best Offset (min delay sample): {best_offset:.6f}")
+    print(f"Average Offset: {statistics.mean(offsets):.6f}")
+    print(f"Minimum Delay: {min(delays):.6f}")
+    if len(delays) > 1:
+        print(f"Delay Jitter (stdev): {statistics.pstdev(delays):.6f}")
+    else:
+        print("Delay Jitter (stdev): 0.000000")
+
+    print("\n----- Drift Correction -----")
+    print(f"Estimated Drift Rate: {drift_rate:.9f} sec/sec")
+    print(f"Offset Used For Correction: {drift_corrected_offset:.6f}")
 
     print("\n----- Accuracy Evaluation -----")
-    print(f"Corrected Time Error: {error:.6f} seconds")
-
+    print(f"Error Before Correction: {baseline_error:.6f} seconds")
+    print(f"Error After Correction : {corrected_error:.6f} seconds")
+    print(f"Improvement            : {improvement:.2f}%")
 else:
-    # All rounds timed out — no data to analyse
     print("No successful synchronization rounds.")
