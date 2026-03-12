@@ -7,7 +7,7 @@ import statistics
 import threading
 import time
 
-DEFAULT_HOST = "192.168.56.1"
+DEFAULT_HOST = os.getenv("CLOCKSYNC_SERVER_IP", "127.0.0.1")
 DEFAULT_PORT = 6000
 BUFFER_SIZE = 1024
 NUM_SYNCS = 10
@@ -21,7 +21,11 @@ CERT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../securit
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Secure clock sync client")
-    parser.add_argument("--host", default=DEFAULT_HOST, help="Server IP or hostname")
+    parser.add_argument(
+        "--host",
+        default=DEFAULT_HOST,
+        help="Server IP or hostname (or set CLOCKSYNC_SERVER_IP env var)",
+    )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Server TCP port")
     parser.add_argument(
         "--server-hostname",
