@@ -134,13 +134,34 @@ def print_summary(samples: List[Dict[str, float]], local_drift: float) -> None:
 def main() -> None:
     args = parse_args()
     server_hostname = args.server_hostname or args.host
-    samples = run_session(
-        host=args.host,
-        port=args.port,
-        server_hostname=server_hostname,
-        rounds=max(1, args.rounds),
-        local_drift=args.drift,
-    )
+    try:
+        samples = run_session(
+            host=args.host,
+            port=args.port,
+            server_hostname=server_hostname,
+            rounds=max(1, args.rounds),
+            local_drift=args.drift,
+        )
+    except ConnectionRefusedError:
+        print(
+            f"ERROR: Connection refused — the server is not running on "
+            f"{args.host}:{args.port}. Start it with:\n"
+            f"  python server/secure_server.py --host 0.0.0.0 --port {args.port}"
+        )
+        sys.exit(1)
+    except socket.timeout:
+        print(
+            f"ERROR: Connection timed out — "
+            f"{args.host}:{args.port} did not respond within {SOCKET_TIMEOUT_SECONDS}s. "
+            f"Check the host/port and any firewall rules."
+        )
+        sys.exit(1)
+    except ssl.SSLError as exc:
+        print(f"ERROR: TLS handshake failed — {exc}")
+        sys.exit(1)
+    except OSError as exc:
+        print(f"ERROR: Network error — {exc}")
+        sys.exit(1)
     save_results(args.output, samples)
     print_summary(samples, args.drift)
 

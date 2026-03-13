@@ -1,3 +1,14 @@
+"""Secure TLS/TCP Time-Sync Server (primary mode)
+
+Transport: TCP (SOCK_STREAM) wrapped in TLS via ssl.SSLContext.
+Default port: 6000
+
+TLS requires a reliable, ordered byte stream — hence TCP rather than UDP.
+The T1–T4 timestamp exchange fully accounts for the TCP round-trip, so
+offset and delay measurements remain accurate.
+
+Requires security/cert.pem + security/key.pem (run generate_cert.py first).
+"""
 import argparse
 import os
 import random

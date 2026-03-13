@@ -514,6 +514,15 @@ class ClockSyncGUI(tk.Tk):
         self._run_subprocess(key="plot_analysis", name="Plot Generator", args=args, persistent=False)
 
     def load_csv_table_and_plot(self) -> None:
+        if getattr(self, "_csv_loading", False):
+            return
+        self._csv_loading = True
+        try:
+            self._do_load_csv_table_and_plot()
+        finally:
+            self._csv_loading = False
+
+    def _do_load_csv_table_and_plot(self) -> None:
         csv_path = self.analysis_input_var.get().strip()
         if not csv_path or not os.path.exists(csv_path):
             messagebox.showerror("Missing file", "Input CSV file was not found.")

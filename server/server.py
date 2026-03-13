@@ -1,3 +1,12 @@
+"""UDP Time-Sync Server (demo / unencrypted mode)
+
+Transport: UDP (SOCK_DGRAM) — no TLS, no authentication.
+Default port: 5005
+
+This server is provided as a lightweight alternative for testing on a
+trusted local network. For secure deployments use secure_server.py, which
+wraps the same MasterClock over a TLS/TCP connection.
+"""
 import argparse
 import os
 import random
