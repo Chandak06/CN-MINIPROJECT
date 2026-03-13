@@ -33,7 +33,10 @@ def parse_args():
     return parser.parse_args()
 
 
-args = parse_args()
+if __name__ == "__main__":
+    args = parse_args()
+else:
+    raise ImportError("generate_cert.py must be run directly, not imported.")
 
 # Create the security/ directory if it does not already exist
 os.makedirs(SECURITY_DIR, exist_ok=True)

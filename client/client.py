@@ -47,13 +47,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def append_results(path: str, rows: List[Dict[str, float]]) -> None:
+def save_results(path: str, rows: List[Dict[str, float]]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    file_exists = os.path.exists(path)
-    with open(path, "a", newline="", encoding="utf-8") as csv_file:
+    with open(path, "w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=["round", "offset", "delay", "elapsed", "reference_time"])
-        if not file_exists:
-            writer.writeheader()
+        writer.writeheader()
         writer.writerows(rows)
 
 
@@ -143,7 +141,7 @@ def main() -> None:
         rounds=max(1, args.rounds),
         local_drift=args.drift,
     )
-    append_results(args.output, samples)
+    save_results(args.output, samples)
     print_summary(samples, args.drift)
 
 

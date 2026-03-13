@@ -396,15 +396,30 @@ class ClockSyncGUI(tk.Tk):
         managed = self.processes.get(key)
         return bool(managed and managed.process.poll() is None)
 
+    def _validate_port(self, value: str, default: str) -> str | None:
+        """Return the port string if valid (1-65535), else show an error and return None."""
+        raw = value.strip() or default
+        try:
+            port = int(raw)
+            if not (1 <= port <= 65535):
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Invalid port", f"Port must be an integer between 1 and 65535 (got: {raw!r}).")
+            return None
+        return str(port)
+
     def start_udp_server(self) -> None:
+        port = self._validate_port(self.udp_port_var.get(), "5005")
+        if port is None:
+            return
         args = [
             os.path.join("server", "server.py"),
             "--host",
             self.udp_host_var.get().strip() or "0.0.0.0",
             "--port",
-            self.udp_port_var.get().strip() or "5005",
+            port,
             "--ntp-server",
-            self.udp_ntp_var.get().strip() or "pool.ntp.org",
+            self.udp_ntp_var.get().strip() or "time.google.com",
         ]
         self._run_subprocess("udp_server", "UDP Server", args=args, persistent=True)
 
@@ -421,14 +436,17 @@ class ClockSyncGUI(tk.Tk):
             )
             return
 
+        port = self._validate_port(self.tls_port_var.get(), "6000")
+        if port is None:
+            return
         args = [
             os.path.join("server", "secure_server.py"),
             "--host",
             self.tls_host_var.get().strip() or "0.0.0.0",
             "--port",
-            self.tls_port_var.get().strip() or "6000",
+            port,
             "--ntp-server",
-            self.tls_ntp_var.get().strip() or "pool.ntp.org",
+            self.tls_ntp_var.get().strip() or "time.google.com",
         ]
         self._run_subprocess("tls_server", "TLS Server", args=args, persistent=True)
 
@@ -436,20 +454,36 @@ class ClockSyncGUI(tk.Tk):
         self._stop_process("tls_server")
 
     def run_client(self) -> None:
+        port = self._validate_port(self.client_port_var.get(), "6000")
+        if port is None:
+            return
+
+        rounds_raw = self.client_rounds_var.get().strip() or "10"
+        try:
+            rounds = str(max(1, int(rounds_raw)))
+        except ValueError:
+            messagebox.showerror("Invalid rounds", f"Rounds must be a positive integer (got: {rounds_raw!r}).")
+            return
+
+        output_path = self.client_output_var.get().strip() or os.path.join("results", "sync_data.csv")
+        if not output_path.endswith(".csv"):
+            messagebox.showerror("Invalid output path", "Output path must end with .csv")
+            return
+
         args = [
             os.path.join("client", "client.py"),
             "--host",
             self.client_host_var.get().strip() or "127.0.0.1",
             "--port",
-            self.client_port_var.get().strip() or "6000",
+            port,
             "--server-hostname",
             self.client_server_hostname_var.get().strip() or "localhost",
             "--rounds",
-            self.client_rounds_var.get().strip() or "10",
+            rounds,
             "--drift",
             self.client_drift_var.get().strip() or "0.5",
             "--output",
-            self.client_output_var.get().strip() or os.path.join("results", "sync_data.csv"),
+            output_path,
         ]
         self._run_subprocess("client_run", "Client", args=args, persistent=False)
 

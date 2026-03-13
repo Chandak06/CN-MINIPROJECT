@@ -1,6 +1,14 @@
 import argparse
 import csv
+import os
+import sys
 from typing import Dict, List
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+from utils.statistics_tools import estimate_drift_rate  # noqa: E402
 
 
 def read_samples(csv_path: str) -> List[Dict[str, float]]:
@@ -15,23 +23,6 @@ def read_samples(csv_path: str) -> List[Dict[str, float]]:
                 }
             )
     return samples
-
-
-def estimate_drift_rate(samples: List[Dict[str, float]]) -> float:
-    if len(samples) < 2:
-        return 0.0
-
-    x = [item["elapsed"] for item in samples]
-    y = [item["offset"] for item in samples]
-    x_mean = sum(x) / len(x)
-    y_mean = sum(y) / len(y)
-
-    denominator = sum((value - x_mean) ** 2 for value in x)
-    if denominator == 0:
-        return 0.0
-
-    numerator = sum((x[idx] - x_mean) * (y[idx] - y_mean) for idx in range(len(samples)))
-    return numerator / denominator
 
 
 def main() -> None:

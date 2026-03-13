@@ -61,7 +61,7 @@ def main() -> None:
             if not data:
                 return
 
-            t2 = clock.now()
+            t2 = clock.now()  # Capture T2 immediately after receive, before any processing
             packet = decode_packet(data)
             validate_request(packet)
             request_id = int(packet["id"])

@@ -11,7 +11,7 @@ except ImportError:  # pragma: no cover
 LOGGER = logging.getLogger(__name__)
 
 
-def fetch_ntp_time(ntp_server: str = "pool.ntp.org", timeout: int = 2) -> Optional[float]:
+def fetch_ntp_time(ntp_server: str = "time.google.com", timeout: int = 2) -> Optional[float]:
     if ntplib is None:
         LOGGER.warning("ntplib is not installed; using system time fallback.")
         return None

@@ -9,7 +9,7 @@ import time
 
 DEFAULT_HOST = os.getenv("CLOCKSYNC_SERVER_IP", "127.0.0.1")
 DEFAULT_PORT = 6000
-BUFFER_SIZE = 1024
+BUFFER_SIZE = 2048
 NUM_SYNCS = 10
 REQUEST_INTERVAL_SECONDS = 1
 SOCKET_TIMEOUT_SECONDS = 5
@@ -54,15 +54,13 @@ def compute_drift_rate(samples):
     return numerator / denominator
 
 
-context = ssl.create_default_context()
-context.load_verify_locations(CERT_FILE)
-
-args = parse_args()
-host = args.host
-port = args.port
-server_hostname = args.server_hostname or host
-num_rounds = args.rounds
-num_clients = max(1, args.clients)
+# Module-level variables populated by main() before starting threads
+context: ssl.SSLContext
+host: str
+port: int
+server_hostname: str
+num_rounds: int
+num_clients: int
 print_lock = threading.Lock()
 
 
@@ -82,14 +80,17 @@ def run_client_session(client_id):
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
             secure_socket = context.wrap_socket(client_socket, server_hostname=server_hostname)
-            secure_socket.connect((host, port))
+            try:
+                secure_socket.connect((host, port))
 
-            t1 = time.time() + simulated_drift
-            request = {"type": "TIME_REQUEST", "id": request_id, "T1": t1}
-            secure_socket.sendall(json.dumps(request).encode())
+                t1 = time.time() + simulated_drift
+                request = {"type": "TIME_REQUEST", "id": request_id, "T1": t1}
+                secure_socket.sendall(json.dumps(request).encode())
 
-            data = secure_socket.recv(BUFFER_SIZE)
-            t4 = time.time() + simulated_drift
+                data = secure_socket.recv(BUFFER_SIZE)
+                t4 = time.time() + simulated_drift
+            finally:
+                secure_socket.close()
 
             response = json.loads(data.decode())
             if response.get("type") != "TIME_REPLY":
@@ -115,8 +116,6 @@ def run_client_session(client_id):
                 print(f"[Client {client_id}] Round {request_id}")
                 print(f"[Client {client_id}] Offset: {offset:.6f}")
                 print(f"[Client {client_id}] Delay : {delay:.6f}\n")
-
-            secure_socket.close()
 
         except ConnectionRefusedError as e:
             with print_lock:
@@ -180,6 +179,18 @@ def run_client_session(client_id):
 
 
 def main():
+    global context, host, port, server_hostname, num_rounds, num_clients
+
+    args = parse_args()
+    host = args.host
+    port = args.port
+    server_hostname = args.server_hostname or host
+    num_rounds = args.rounds
+    num_clients = max(1, args.clients)
+
+    context = ssl.create_default_context()
+    context.load_verify_locations(CERT_FILE)
+
     if num_clients == 1:
         run_client_session(1)
         return

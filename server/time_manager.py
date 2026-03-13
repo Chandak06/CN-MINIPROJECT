@@ -40,8 +40,8 @@ class MasterClock:
             ntp_time = fetch_ntp_time(self.ntp_server)
             with self._lock:
                 if ntp_time is None:
-                    self._offset = 0.0
-                    self._last_sync_status = "system-time"
+                    # Keep last known good offset; only mark status as degraded
+                    self._last_sync_status = "system-time (ntp unavailable)"
                 else:
                     self._offset = compute_reference_offset(ntp_time)
                     self._last_sync_status = f"ntp:{self.ntp_server}"
