@@ -67,6 +67,7 @@ print_lock = threading.Lock()
 def run_client_session(client_id):
     samples = []
     session_start_monotonic = time.monotonic()
+    abort_reason = ""
 
     with print_lock:
         print(f"\n[Client {client_id}] Starting Secure Clock Synchronization...")
@@ -121,6 +122,11 @@ def run_client_session(client_id):
             with print_lock:
                 print(f"[Client {client_id}] Round {request_id} failed: {e}")
                 print("Hint: Start secure_server.py on the server device, verify IP/port, and allow TCP port in firewall.\n")
+            abort_reason = (
+                f"Server at {host}:{port} refused the connection. "
+                "Stopping remaining rounds to avoid repeated failures."
+            )
+            break
 
         except socket.timeout as e:
             with print_lock:
@@ -176,6 +182,8 @@ def run_client_session(client_id):
     else:
         with print_lock:
             print(f"[Client {client_id}] No successful synchronization rounds.\n")
+            if abort_reason:
+                print(f"[Client {client_id}] {abort_reason}\n")
 
 
 def main():

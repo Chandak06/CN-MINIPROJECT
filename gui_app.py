@@ -459,6 +459,14 @@ class ClockSyncGUI(tk.Tk):
         if port is None:
             return
 
+        target_host = (self.client_host_var.get().strip() or "127.0.0.1").lower()
+        if target_host in {"127.0.0.1", "localhost", "::1"} and not self._is_running("tls_server"):
+            messagebox.showerror(
+                "TLS server not running",
+                "Client target is local machine, but TLS Server is not running in launcher. Start TLS Server first.",
+            )
+            return
+
         rounds_raw = self.client_rounds_var.get().strip() or "10"
         try:
             rounds = str(max(1, int(rounds_raw)))
