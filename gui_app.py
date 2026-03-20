@@ -3,9 +3,11 @@ import argparse
 import os
 import queue
 import signal
+import socket
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from dataclasses import dataclass
 from tkinter import filedialog, messagebox, ttk
@@ -409,6 +411,16 @@ class ClockSyncGUI(tk.Tk):
             return None
         return str(port)
 
+    def _wait_for_tcp_port(self, host: str, port: int, timeout_seconds: float = 4.0) -> bool:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection((host, port), timeout=0.5):
+                    return True
+            except OSError:
+                time.sleep(0.15)
+        return False
+
     def start_udp_server(self) -> None:
         port = self._validate_port(self.udp_port_var.get(), "5005")
         if port is None:
@@ -459,13 +471,20 @@ class ClockSyncGUI(tk.Tk):
         if port is None:
             return
 
+        port_num = int(port)
         target_host = (self.client_host_var.get().strip() or "127.0.0.1").lower()
         if target_host in {"127.0.0.1", "localhost", "::1"} and not self._is_running("tls_server"):
-            messagebox.showerror(
-                "TLS server not running",
-                "Client target is local machine, but TLS Server is not running in launcher. Start TLS Server first.",
-            )
-            return
+            self._append_log("[Launcher] TLS Server is not running for local client target; starting TLS Server automatically...")
+            self.start_tls_server()
+            if not self._is_running("tls_server"):
+                # start_tls_server already showed detailed error (e.g., missing certs)
+                return
+            if not self._wait_for_tcp_port("127.0.0.1", port_num, timeout_seconds=4.0):
+                messagebox.showerror(
+                    "TLS server not ready",
+                    "TLS Server was started but did not open the client target port in time. Check the server log for startup errors.",
+                )
+                return
 
         rounds_raw = self.client_rounds_var.get().strip() or "10"
         try:
