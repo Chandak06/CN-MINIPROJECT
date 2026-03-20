@@ -315,7 +315,8 @@ class ClockSyncGUI(tk.Tk):
             messagebox.showinfo("Already running", f"{name} is already running.")
             return
 
-        command = [sys.executable] + args
+        # Use unbuffered stdout/stderr so launched process logs appear instantly in the GUI.
+        command = [sys.executable, "-u"] + args
         self._append_log(f"[Launcher] Starting {name}: {' '.join(command)}")
 
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
