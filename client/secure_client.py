@@ -73,6 +73,7 @@ def run_client_session(client_id):
         print(f"\n[Client {client_id}] Starting Secure Clock Synchronization...")
         print(f"[Client {client_id}] Target server: {host}:{port}")
         print(f"[Client {client_id}] TLS hostname verification: {server_hostname}\n")
+        print(f"[Client {client_id}] Trust store certificate: {os.path.abspath(CERT_FILE)}\n")
 
     for i in range(num_rounds):
         request_id = i + 1
@@ -147,6 +148,19 @@ def run_client_session(client_id):
             break
 
         except (ssl.SSLError, OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+            message = str(e)
+            if isinstance(e, ssl.SSLError) and "CERTIFICATE_VERIFY_FAILED" in message:
+                with print_lock:
+                    print(f"[Client {client_id}] Round {request_id} failed: {e}")
+                    print(
+                        "Hint: Client does not trust the server certificate. "
+                        "Copy the server's latest security/cert.pem to this client path and restart client/server.\n"
+                    )
+                abort_reason = (
+                    "Server certificate verification failed (untrusted CA or cert mismatch). "
+                    "Stopping remaining rounds to avoid repeated TLS verification failures."
+                )
+                break
             with print_lock:
                 print(f"[Client {client_id}] Round {request_id} failed: {e}\n")
 
