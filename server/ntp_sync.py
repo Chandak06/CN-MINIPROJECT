@@ -10,6 +10,10 @@ except ImportError:  # pragma: no cover
 
 LOGGER = logging.getLogger(__name__)
 
+NTP_WARNING_INTERVAL_SECONDS = 300
+_last_ntp_warning_at = 0.0
+_last_ntp_warning_key = ""
+
 DEFAULT_NTP_FALLBACKS = (
     "time.google.com",
     "time.cloudflare.com",
@@ -33,6 +37,9 @@ def _candidate_servers(ntp_server: str) -> list[str]:
 
 
 def fetch_ntp_time(ntp_server: str = "time.google.com", timeout: int = 2) -> Optional[float]:
+    global _last_ntp_warning_at
+    global _last_ntp_warning_key
+
     if ntplib is None:
         LOGGER.warning("ntplib is not installed; using system time fallback.")
         return None
@@ -50,7 +57,12 @@ def fetch_ntp_time(ntp_server: str = "time.google.com", timeout: int = 2) -> Opt
         except Exception as exc:
             errors.append(f"{server}: {exc}")
 
-    LOGGER.warning("NTP unavailable; using system time. Attempts: %s", " | ".join(errors))
+    warning_key = " | ".join(errors)
+    now = time.monotonic()
+    if warning_key != _last_ntp_warning_key or (now - _last_ntp_warning_at) >= NTP_WARNING_INTERVAL_SECONDS:
+        LOGGER.warning("NTP unavailable; using system time. Attempts: %s", warning_key)
+        _last_ntp_warning_at = now
+        _last_ntp_warning_key = warning_key
     return None
 
 
