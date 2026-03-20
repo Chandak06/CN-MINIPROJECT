@@ -111,6 +111,7 @@ def run_client_session(client_id):
                 "offset": offset,
                 "delay": delay,
                 "elapsed": time.monotonic() - session_start_monotonic,
+                "reference_time": response.get("reference_time"),
             }
             samples.append(sample)
 
@@ -179,10 +180,17 @@ def run_client_session(client_id):
 
         drifted_now = time.time() + simulated_drift
         corrected_time = drifted_now + drift_corrected_offset
-        real_time = time.time()
 
-        baseline_error = abs(drifted_now - real_time)
-        corrected_error = abs(corrected_time - real_time)
+        latest_reference_time = samples[-1].get("reference_time")
+        if isinstance(latest_reference_time, (int, float)):
+            baseline_error = abs(drifted_now - latest_reference_time)
+            corrected_error = abs(corrected_time - latest_reference_time)
+        else:
+            # Fallback when server does not provide reference_time.
+            # This fallback is less meaningful across different machines.
+            real_time = time.time()
+            baseline_error = abs(drifted_now - real_time)
+            corrected_error = abs(corrected_time - real_time)
         improvement = 0.0
         if baseline_error > 0:
             improvement = ((baseline_error - corrected_error) / baseline_error) * 100
@@ -206,6 +214,8 @@ def run_client_session(client_id):
             print(f"Error Before Correction: {baseline_error:.6f} seconds")
             print(f"Error After Correction : {corrected_error:.6f} seconds")
             print(f"Improvement            : {improvement:.2f}%\n")
+            if not isinstance(latest_reference_time, (int, float)):
+                print("Note: Server reference_time not available; accuracy values use local fallback.\n")
     else:
         with print_lock:
             print(f"[Client {client_id}] No successful synchronization rounds.\n")
