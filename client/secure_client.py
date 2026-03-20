@@ -133,6 +133,19 @@ def run_client_session(client_id):
                 print(f"[Client {client_id}] Round {request_id} failed: {e}")
                 print("Hint: Timeout usually means unreachable server IP/port or blocked firewall.\n")
 
+        except ssl.SSLCertVerificationError as e:
+            with print_lock:
+                print(f"[Client {client_id}] Round {request_id} failed: {e}")
+                print(
+                    "Hint: TLS hostname/IP must match certificate SAN. "
+                    "Regenerate cert with this server IP in SAN and restart TLS server.\n"
+                )
+            abort_reason = (
+                f"Certificate for server does not match {server_hostname}. "
+                "Stopping remaining rounds to avoid repeated TLS verification failures."
+            )
+            break
+
         except (ssl.SSLError, OSError, json.JSONDecodeError, KeyError, ValueError) as e:
             with print_lock:
                 print(f"[Client {client_id}] Round {request_id} failed: {e}\n")

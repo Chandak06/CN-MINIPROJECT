@@ -3,3 +3,6 @@ matplotlib>=3.8.0
 ntplib>=0.4.0
 # tkinter is bundled with CPython on Windows/macOS.
 # On Linux: sudo apt install python3-tk
+
+
+python generate_cert.py --ips 127.0.0.1 10.1.17.17 --dns localhost --common-name 10.1.17.17

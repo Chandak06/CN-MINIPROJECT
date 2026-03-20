@@ -97,8 +97,8 @@ def main() -> None:
             client_socket, addr = server_socket.accept()
             try:
                 secure_conn = context.wrap_socket(client_socket, server_side=True)
-            except ssl.SSLError as exc:
-                print(f"SSL handshake failed for {addr}: {exc}")
+            except (ssl.SSLError, OSError) as exc:
+                print(f"TLS handshake failed for {addr}: {exc}")
                 client_socket.close()
                 continue
 
