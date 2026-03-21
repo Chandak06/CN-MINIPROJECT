@@ -124,6 +124,14 @@ python server/secure_server.py --host 0.0.0.0 --port 6000
 python client/client.py --host 127.0.0.1 --port 6000 --server-hostname localhost --rounds 10 --drift 0.5
 ```
 
+### Run the client GUI (shows server time received)
+
+```powershell
+python client/client_gui.py --host 127.0.0.1 --port 6000 --server-hostname localhost --rounds 10 --drift 0.5
+```
+
+In the client GUI, the table column `Server Time (reference_time)` shows the exact server timestamp returned by the TLS server response for each round.
+
 Arguments:
 
 | Flag | Default | Description |
