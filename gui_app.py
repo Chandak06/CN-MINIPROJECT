@@ -193,7 +193,7 @@ class ClockSyncGUI(tk.Tk):
 
         self.client_host_var = tk.StringVar(value="127.0.0.1")
         self.client_port_var = tk.StringVar(value="6000")
-        self.client_server_hostname_var = tk.StringVar(value="localhost")
+        self.client_server_hostname_var = tk.StringVar(value="127.0.0.1")
         self.client_rounds_var = tk.StringVar(value="10")
         self.client_drift_var = tk.StringVar(value="0.5")
         self.client_output_var = tk.StringVar(value=os.path.join(PROJECT_ROOT, "results", "sync_data.csv"))
@@ -542,11 +542,11 @@ class ClockSyncGUI(tk.Tk):
         args = [
             os.path.join("client", "client.py"),
             "--host",
-            self.client_host_var.get().strip() or "127.0.0.1",
+            client_host,
             "--port",
             port,
             "--server-hostname",
-            self.client_server_hostname_var.get().strip() or "localhost",
+            client_server_hostname,
             "--rounds",
             rounds,
             "--drift",

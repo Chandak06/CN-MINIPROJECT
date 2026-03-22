@@ -1,4 +1,5 @@
 import logging
+import socket
 import time
 from typing import Optional
 
@@ -11,8 +12,7 @@ except ImportError:  # pragma: no cover
 LOGGER = logging.getLogger(__name__)
 
 NTP_WARNING_INTERVAL_SECONDS = 300
-_last_ntp_warning_at = 0.0
-_last_ntp_warning_key = ""
+_warning_state = {"at": 0.0, "key": ""}
 
 DEFAULT_NTP_FALLBACKS = (
     "time.google.com",
@@ -36,12 +36,22 @@ def _candidate_servers(ntp_server: str) -> list[str]:
     return primary
 
 
-def fetch_ntp_time(ntp_server: str = "time.google.com", timeout: int = 2) -> Optional[float]:
-    global _last_ntp_warning_at
-    global _last_ntp_warning_key
+def _should_emit_warning(key: str) -> bool:
+    now = time.monotonic()
+    last_key = str(_warning_state["key"])
+    last_at = float(_warning_state["at"])
+    if key != last_key or (now - last_at) >= NTP_WARNING_INTERVAL_SECONDS:
+        _warning_state["key"] = key
+        _warning_state["at"] = now
+        return True
+    return False
 
+
+def fetch_ntp_time(ntp_server: str = "time.google.com", timeout: int = 2) -> Optional[float]:
     if ntplib is None:
-        LOGGER.warning("ntplib is not installed; using system time fallback.")
+        warning_key = "ntplib-missing"
+        if _should_emit_warning(warning_key):
+            LOGGER.warning("ntplib is not installed; using system time fallback.")
         return None
 
     candidates = _candidate_servers(ntp_server)
@@ -50,19 +60,23 @@ def fetch_ntp_time(ntp_server: str = "time.google.com", timeout: int = 2) -> Opt
 
     client = ntplib.NTPClient()
     errors: list[str] = []
+    ntp_exception = getattr(ntplib, "NTPException", None)
+    handled_exceptions: tuple[type[BaseException], ...]
+    if isinstance(ntp_exception, type) and issubclass(ntp_exception, BaseException):
+        handled_exceptions = (socket.timeout, TimeoutError, OSError, ntp_exception)
+    else:
+        handled_exceptions = (socket.timeout, TimeoutError, OSError)
+
     for server in candidates:
         try:
             response = client.request(server, version=3, timeout=timeout)
             return response.tx_time
-        except Exception as exc:
+        except handled_exceptions as exc:
             errors.append(f"{server}: {exc}")
 
     warning_key = " | ".join(errors)
-    now = time.monotonic()
-    if warning_key != _last_ntp_warning_key or (now - _last_ntp_warning_at) >= NTP_WARNING_INTERVAL_SECONDS:
+    if _should_emit_warning(warning_key):
         LOGGER.warning("NTP unavailable; using system time. Attempts: %s", warning_key)
-        _last_ntp_warning_at = now
-        _last_ntp_warning_key = warning_key
     return None
 
 
