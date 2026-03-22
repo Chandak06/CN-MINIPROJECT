@@ -54,7 +54,7 @@ class ClientSyncGUI(tk.Tk):
 
         self.host_var = tk.StringVar(value=DEFAULT_HOST)
         self.port_var = tk.StringVar(value=str(DEFAULT_PORT))
-        self.hostname_var = tk.StringVar(value="localhost")
+        self.hostname_var = tk.StringVar(value=DEFAULT_HOST)
         self.rounds_var = tk.StringVar(value=str(DEFAULT_ROUNDS))
         self.drift_var = tk.StringVar(value=str(DEFAULT_DRIFT_SECONDS))
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SECONDS))
@@ -191,9 +191,10 @@ class ClientSyncGUI(tk.Tk):
         if isinstance(exc, ssl.SSLCertVerificationError):
             return (
                 "TLS certificate verification failed.\n\n"
+                f"Reason: {exc}\n"
                 f"Current TLS hostname: {server_hostname}\n"
-                "Ensure this value matches a SAN entry in security/cert.pem, "
-                "then restart the server."
+                "Ensure the client trusts the same security/cert.pem presented by the server, "
+                "and that this hostname/IP exists in the certificate SAN entries."
             )
 
         if isinstance(exc, ssl.SSLError):
@@ -355,7 +356,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Client-side GUI for secure clock sync")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--server-hostname", default="localhost")
+    parser.add_argument("--server-hostname", default=None)
     parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
     parser.add_argument("--drift", type=float, default=DEFAULT_DRIFT_SECONDS)
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_SECONDS)
@@ -367,7 +368,7 @@ def main() -> None:
     app = ClientSyncGUI()
     app.host_var.set(args.host)
     app.port_var.set(str(args.port))
-    app.hostname_var.set(args.server_hostname)
+    app.hostname_var.set(args.server_hostname or args.host)
     app.rounds_var.set(str(args.rounds))
     app.drift_var.set(str(args.drift))
     app.interval_var.set(str(args.interval))
