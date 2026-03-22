@@ -350,9 +350,31 @@ class ClockSyncGUI(tk.Tk):
         code = proc.wait()
         self._append_log(f"[{managed.name}] Exited with code {code}")
 
+        if key == "client_run":
+            # Switch analysis to the CSV produced by the latest client run.
+            self.after(0, self._on_client_run_finished, code)
+
         if not persistent:
             self.processes.pop(key, None)
         self._refresh_status_labels()
+
+    def _on_client_run_finished(self, exit_code: int) -> None:
+        output_path = self._resolve_project_path(
+            self.client_output_var.get().strip(),
+            os.path.join("results", "sync_data.csv"),
+        )
+        self.analysis_input_var.set(output_path)
+
+        if exit_code != 0:
+            self._append_log(
+                "[Analysis] Client run failed; analysis input was updated, but metrics may still be unavailable until a successful run."
+            )
+            return
+
+        if os.path.exists(output_path):
+            self.load_csv_table_and_plot()
+        else:
+            self._append_log(f"[Analysis] Latest output CSV not found: {output_path}")
 
     def _stop_process(self, key: str) -> None:
         managed = self.processes.get(key)
@@ -410,6 +432,12 @@ class ClockSyncGUI(tk.Tk):
             messagebox.showerror("Invalid port", f"Port must be an integer between 1 and 65535 (got: {raw!r}).")
             return None
         return str(port)
+
+    def _resolve_project_path(self, path_value: str, default: str) -> str:
+        raw = path_value.strip() or default
+        if os.path.isabs(raw):
+            return raw
+        return os.path.join(PROJECT_ROOT, raw)
 
     def _wait_for_tcp_port(self, host: str, port: int, timeout_seconds: float = 4.0) -> bool:
         deadline = time.monotonic() + timeout_seconds
@@ -498,6 +526,19 @@ class ClockSyncGUI(tk.Tk):
             messagebox.showerror("Invalid output path", "Output path must end with .csv")
             return
 
+        # Start with a fresh CSV so analysis reflects only this run.
+        output_abs_path = self._resolve_project_path(output_path, os.path.join("results", "sync_data.csv"))
+        try:
+            os.makedirs(os.path.dirname(output_abs_path), exist_ok=True)
+            with open(output_abs_path, "w", newline="", encoding="utf-8") as csv_file:
+                csv_file.write("round,offset,delay,elapsed,reference_time\n")
+        except OSError as exc:
+            messagebox.showerror("Output error", f"Unable to prepare output CSV: {exc}")
+            return
+
+        # Keep analysis tab pinned to the same file used by the active client run.
+        self.analysis_input_var.set(output_abs_path)
+
         args = [
             os.path.join("client", "client.py"),
             "--host",
@@ -511,7 +552,7 @@ class ClockSyncGUI(tk.Tk):
             "--drift",
             self.client_drift_var.get().strip() or "0.5",
             "--output",
-            output_path,
+            output_abs_path,
         ]
         self._run_subprocess("client_run", "Client", args=args, persistent=False)
 
@@ -519,26 +560,43 @@ class ClockSyncGUI(tk.Tk):
         self._stop_process("client_run")
 
     def run_drift_analysis(self) -> None:
+        input_path = self._resolve_project_path(
+            self.analysis_input_var.get().strip(),
+            os.path.join("results", "sync_data.csv"),
+        )
+        self.analysis_input_var.set(input_path)
         self._run_subprocess(
             key="drift_analysis",
             name="Drift Estimator",
-            args=[os.path.join("analysis", "drift_estimator.py"), "--input", self.analysis_input_var.get().strip()],
+            args=[os.path.join("analysis", "drift_estimator.py"), "--input", input_path],
             persistent=False,
         )
 
     def run_accuracy_analysis(self) -> None:
+        input_path = self._resolve_project_path(
+            self.analysis_input_var.get().strip(),
+            os.path.join("results", "sync_data.csv"),
+        )
+        self.analysis_input_var.set(input_path)
         self._run_subprocess(
             key="accuracy_analysis",
             name="Accuracy Evaluator",
-            args=[os.path.join("analysis", "accuracy_evaluator.py"), "--input", self.analysis_input_var.get().strip()],
+            args=[os.path.join("analysis", "accuracy_evaluator.py"), "--input", input_path],
             persistent=False,
         )
 
     def run_plot_script(self) -> None:
-        args = [os.path.join("analysis", "plot_results.py"), "--input", self.analysis_input_var.get().strip()]
+        input_path = self._resolve_project_path(
+            self.analysis_input_var.get().strip(),
+            os.path.join("results", "sync_data.csv"),
+        )
+        self.analysis_input_var.set(input_path)
+        args = [os.path.join("analysis", "plot_results.py"), "--input", input_path]
         output_path = self.analysis_output_var.get().strip()
         if output_path:
-            args += ["--output", output_path]
+            output_abs_path = self._resolve_project_path(output_path, os.path.join("results", "sync_plot.png"))
+            self.analysis_output_var.set(output_abs_path)
+            args += ["--output", output_abs_path]
         self._run_subprocess(key="plot_analysis", name="Plot Generator", args=args, persistent=False)
 
     def load_csv_table_and_plot(self) -> None:
@@ -551,7 +609,11 @@ class ClockSyncGUI(tk.Tk):
             self._csv_loading = False
 
     def _do_load_csv_table_and_plot(self) -> None:
-        csv_path = self.analysis_input_var.get().strip()
+        csv_path = self._resolve_project_path(
+            self.analysis_input_var.get().strip(),
+            os.path.join("results", "sync_data.csv"),
+        )
+        self.analysis_input_var.set(csv_path)
         if not csv_path or not os.path.exists(csv_path):
             messagebox.showerror("Missing file", "Input CSV file was not found.")
             return

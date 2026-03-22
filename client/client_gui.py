@@ -174,6 +174,36 @@ class ClientSyncGUI(tk.Tk):
         self.start_btn.configure(state="disabled" if running else "normal")
         self.stop_btn.configure(state="normal" if running else "disabled")
 
+    def _friendly_sync_error(self, exc: Exception, host: str, port: int, server_hostname: str) -> str:
+        if isinstance(exc, ConnectionRefusedError):
+            return (
+                f"Connection refused by {host}:{port}.\n\n"
+                "Start the TLS server first, for example:\n"
+                f"python server/secure_server.py --host 0.0.0.0 --port {port}"
+            )
+
+        if isinstance(exc, socket.timeout):
+            return (
+                f"Connection to {host}:{port} timed out after {SOCKET_TIMEOUT_SECONDS} seconds.\n\n"
+                "Check server IP/port and firewall rules on the server machine."
+            )
+
+        if isinstance(exc, ssl.SSLCertVerificationError):
+            return (
+                "TLS certificate verification failed.\n\n"
+                f"Current TLS hostname: {server_hostname}\n"
+                "Ensure this value matches a SAN entry in security/cert.pem, "
+                "then restart the server."
+            )
+
+        if isinstance(exc, ssl.SSLError):
+            return f"TLS handshake failed: {exc}"
+
+        if isinstance(exc, OSError):
+            return f"Network error while connecting to {host}:{port}: {exc}"
+
+        return str(exc)
+
     def start_sync(self) -> None:
         if self.worker and self.worker.is_alive():
             return
@@ -267,8 +297,17 @@ class ClientSyncGUI(tk.Tk):
 
                 self.after(0, self._append_row, row)
                 self.after(0, self.status_var.set, f"Running... ({completed}/{rounds})")
-            except Exception as exc:
-                self.after(0, self._handle_error, str(exc))
+            except (
+                ConnectionRefusedError,
+                socket.timeout,
+                ssl.SSLError,
+                OSError,
+                ValueError,
+                KeyError,
+                TypeError,
+            ) as exc:
+                message = self._friendly_sync_error(exc, host=host, port=port, server_hostname=server_hostname)
+                self.after(0, self._handle_error, message)
                 return
 
             slept = 0.0
