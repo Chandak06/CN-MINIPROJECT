@@ -1,14 +1,19 @@
+import csv
 import argparse
 import os
 import socket
 import ssl
+import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
 from dataclasses import dataclass
 from datetime import datetime
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
+
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -30,6 +35,8 @@ DEFAULT_INTERVAL_SECONDS = 1.0
 BUFFER_SIZE = 2048
 SOCKET_TIMEOUT_SECONDS = 5
 CERT_FILE = os.path.join(PROJECT_ROOT, "security", "cert.pem")
+DEFAULT_OUTPUT_CSV = os.path.join(PROJECT_ROOT, "results", "client_sync_data.csv")
+DEFAULT_ANALYSIS_PLOT = os.path.join(PROJECT_ROOT, "results", "client_sync_plot.png")
 
 
 @dataclass
@@ -39,6 +46,7 @@ class SyncRow:
     offset: float
     delay: float
     receive_time: float
+    elapsed: float
 
 
 class ClientSyncGUI(tk.Tk):
@@ -58,6 +66,9 @@ class ClientSyncGUI(tk.Tk):
         self.rounds_var = tk.StringVar(value=str(DEFAULT_ROUNDS))
         self.drift_var = tk.StringVar(value=str(DEFAULT_DRIFT_SECONDS))
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SECONDS))
+        self.output_var = tk.StringVar(value=DEFAULT_OUTPUT_CSV)
+        self.analysis_input_var = tk.StringVar(value=DEFAULT_OUTPUT_CSV)
+        self.analysis_output_var = tk.StringVar(value=DEFAULT_ANALYSIS_PLOT)
 
         self.status_var = tk.StringVar(value="Idle")
         self.server_time_var = tk.StringVar(value="-")
@@ -95,6 +106,21 @@ class ClientSyncGUI(tk.Tk):
             text="Runs TLS sync rounds and shows the exact server time received in each response.",
         ).pack(anchor="w", pady=(2, 10))
 
+        notebook = ttk.Notebook(outer)
+        notebook.pack(fill="both", expand=True)
+
+        self.sync_tab = ttk.Frame(notebook)
+        self.analysis_tab = ttk.Frame(notebook)
+        notebook.add(self.sync_tab, text="Client Sync")
+        notebook.add(self.analysis_tab, text="Analysis")
+
+        self._build_sync_tab()
+        self._build_analysis_tab()
+
+    def _build_sync_tab(self) -> None:
+        outer = ttk.Frame(self.sync_tab)
+        outer.pack(fill="both", expand=True)
+
         config = ttk.LabelFrame(outer, text="Connection and Sync Settings", padding=12)
         config.pack(fill="x")
 
@@ -104,12 +130,15 @@ class ClientSyncGUI(tk.Tk):
         self._entry_row(config, "Rounds", self.rounds_var, 3)
         self._entry_row(config, "Simulated Drift (s)", self.drift_var, 4)
         self._entry_row(config, "Interval Between Rounds (s)", self.interval_var, 5)
+        self._entry_row(config, "Output CSV", self.output_var, 6)
 
         actions = ttk.Frame(config)
-        actions.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        actions.grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self.choose_output_btn = ttk.Button(actions, text="Choose Output", command=self._choose_output_path)
         self.start_btn = ttk.Button(actions, text="Start Sync", command=self.start_sync)
         self.stop_btn = ttk.Button(actions, text="Stop", command=self.stop_sync, state="disabled")
         self.clear_btn = ttk.Button(actions, text="Clear Table", command=self.clear_table)
+        self.choose_output_btn.pack(side="left", padx=(0, 8))
         self.start_btn.pack(side="left", padx=(0, 8))
         self.stop_btn.pack(side="left", padx=(0, 8))
         self.clear_btn.pack(side="left")
@@ -161,6 +190,59 @@ class ClientSyncGUI(tk.Tk):
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+    def _build_analysis_tab(self) -> None:
+        outer = ttk.Frame(self.analysis_tab)
+        outer.pack(fill="both", expand=True)
+
+        top = ttk.LabelFrame(outer, text="Analysis Configuration", padding=12)
+        top.pack(fill="x")
+
+        self._entry_row(top, "Input CSV", self.analysis_input_var, 0)
+        self._entry_row(top, "Output Plot (optional)", self.analysis_output_var, 1)
+
+        actions = ttk.Frame(top)
+        actions.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(actions, text="Choose CSV", command=self._choose_input_csv).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Load CSV", command=self.load_csv_table_and_plot).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Run Drift Estimator", command=self.run_drift_analysis).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Run Accuracy Eval", command=self.run_accuracy_analysis).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Generate Plot File", command=self.run_plot_script).pack(side="left")
+
+        middle = ttk.Frame(outer)
+        middle.pack(fill="both", expand=True, pady=(12, 0))
+        middle.columnconfigure(0, weight=1)
+        middle.columnconfigure(1, weight=1)
+        middle.rowconfigure(0, weight=1)
+
+        table_panel = ttk.Frame(middle, style="Panel.TFrame", padding=10)
+        plot_panel = ttk.Frame(middle, style="Panel.TFrame", padding=10)
+        table_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        plot_panel.grid(row=0, column=1, sticky="nsew")
+
+        ttk.Label(table_panel, text="Latest Samples", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 6))
+        self.analysis_tree = ttk.Treeview(
+            table_panel,
+            columns=("round", "offset", "delay", "elapsed"),
+            show="headings",
+            height=15,
+        )
+        for col, width in (("round", 80), ("offset", 130), ("delay", 130), ("elapsed", 130)):
+            self.analysis_tree.heading(col, text=col.capitalize())
+            self.analysis_tree.column(col, width=width, anchor="center")
+
+        table_scroll = ttk.Scrollbar(table_panel, orient="vertical", command=self.analysis_tree.yview)
+        self.analysis_tree.configure(yscrollcommand=table_scroll.set)
+        self.analysis_tree.pack(side="left", fill="both", expand=True)
+        table_scroll.pack(side="right", fill="y")
+
+        ttk.Label(plot_panel, text="Offset and Delay Trend", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 6))
+        self.figure = Figure(figsize=(5.4, 4.2), dpi=100)
+        self.ax_offset = self.figure.add_subplot(211)
+        self.ax_delay = self.figure.add_subplot(212)
+        self.figure.tight_layout(pad=1.8)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=plot_panel)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
     def _entry_row(self, parent: ttk.Widget, label: str, var: tk.StringVar, row: int) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=4)
         ttk.Entry(parent, textvariable=var, width=44).grid(row=row, column=1, sticky="ew", pady=4)
@@ -173,6 +255,7 @@ class ClientSyncGUI(tk.Tk):
     def _set_running_ui(self, running: bool) -> None:
         self.start_btn.configure(state="disabled" if running else "normal")
         self.stop_btn.configure(state="normal" if running else "disabled")
+        self.choose_output_btn.configure(state="disabled" if running else "normal")
 
     def _friendly_sync_error(self, exc: Exception, host: str, port: int, server_hostname: str) -> str:
         if isinstance(exc, ConnectionRefusedError):
@@ -226,6 +309,21 @@ class ClientSyncGUI(tk.Tk):
             messagebox.showerror("Missing certificate", "security/cert.pem not found. Run generate_cert.py first.")
             return
 
+        output_path = self._resolve_project_path(self.output_var.get().strip(), DEFAULT_OUTPUT_CSV)
+        if not output_path.lower().endswith(".csv"):
+            messagebox.showerror("Invalid output path", "Output path must end with .csv")
+            return
+        try:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with open(output_path, "w", newline="", encoding="utf-8") as csv_file:
+                csv_file.write("round,offset,delay,elapsed,reference_time\n")
+        except OSError as exc:
+            messagebox.showerror("Output error", f"Unable to prepare output CSV: {exc}")
+            return
+
+        self.output_var.set(output_path)
+        self.analysis_input_var.set(output_path)
+
         self.stop_event.clear()
         self.status_var.set("Running...")
         self._set_running_ui(True)
@@ -261,6 +359,8 @@ class ClientSyncGUI(tk.Tk):
     ) -> None:
         context = ssl.create_default_context()
         context.load_verify_locations(CERT_FILE)
+        output_path = self._resolve_project_path(self.output_var.get().strip(), DEFAULT_OUTPUT_CSV)
+        start_perf = time.perf_counter()
 
         completed = 0
         for request_id in range(1, rounds + 1):
@@ -293,8 +393,11 @@ class ClientSyncGUI(tk.Tk):
                     offset=float(sync_values["offset"]),
                     delay=float(sync_values["delay"]),
                     receive_time=t4,
+                    elapsed=time.perf_counter() - start_perf,
                 )
                 completed += 1
+
+                self._append_csv_row(output_path, row)
 
                 self.after(0, self._append_row, row)
                 self.after(0, self.status_var.set, f"Running... ({completed}/{rounds})")
@@ -321,6 +424,7 @@ class ClientSyncGUI(tk.Tk):
             self.after(0, self._finish_status, "Stopped")
         else:
             self.after(0, self._finish_status, f"Completed ({completed}/{rounds})")
+            self.after(0, self.load_csv_table_and_plot)
 
     def _append_row(self, row: SyncRow) -> None:
         self.rows.append(row)
@@ -337,6 +441,160 @@ class ClientSyncGUI(tk.Tk):
                 self._format_timestamp(row.receive_time),
             ),
         )
+
+    def _append_csv_row(self, csv_path: str, row: SyncRow) -> None:
+        try:
+            with open(csv_path, "a", newline="", encoding="utf-8") as csv_file:
+                writer = csv.writer(csv_file)
+                writer.writerow(
+                    [
+                        row.round_id,
+                        f"{row.offset:.6f}",
+                        f"{row.delay:.6f}",
+                        f"{row.elapsed:.3f}",
+                        f"{row.server_time:.6f}",
+                    ]
+                )
+        except OSError as exc:
+            self.after(0, self._handle_error, f"Failed to write output CSV: {exc}")
+
+    def _resolve_project_path(self, path_value: str, default: str) -> str:
+        raw = path_value.strip() or default
+        if os.path.isabs(raw):
+            return raw
+        return os.path.join(PROJECT_ROOT, raw)
+
+    def _run_analysis_script(self, label: str, args: list[str]) -> None:
+        command = [sys.executable, "-u"] + args
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=PROJECT_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            messagebox.showerror(label, f"Failed to start analysis script: {exc}")
+            return
+
+        if completed.returncode != 0:
+            details = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
+            messagebox.showerror(label, f"{label} failed.\n\n{details.strip() or 'No output received.'}")
+            return
+
+        output = ((completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")).strip()
+        if output:
+            messagebox.showinfo(label, output)
+        else:
+            messagebox.showinfo(label, f"{label} completed successfully.")
+
+    def run_drift_analysis(self) -> None:
+        input_path = self._resolve_project_path(self.analysis_input_var.get().strip(), DEFAULT_OUTPUT_CSV)
+        self.analysis_input_var.set(input_path)
+        if not os.path.exists(input_path):
+            messagebox.showerror("Missing file", "Input CSV file was not found.")
+            return
+        self._run_analysis_script("Drift Estimator", [os.path.join("analysis", "drift_estimator.py"), "--input", input_path])
+
+    def run_accuracy_analysis(self) -> None:
+        input_path = self._resolve_project_path(self.analysis_input_var.get().strip(), DEFAULT_OUTPUT_CSV)
+        self.analysis_input_var.set(input_path)
+        if not os.path.exists(input_path):
+            messagebox.showerror("Missing file", "Input CSV file was not found.")
+            return
+        self._run_analysis_script(
+            "Accuracy Evaluator", [os.path.join("analysis", "accuracy_evaluator.py"), "--input", input_path]
+        )
+
+    def run_plot_script(self) -> None:
+        input_path = self._resolve_project_path(self.analysis_input_var.get().strip(), DEFAULT_OUTPUT_CSV)
+        self.analysis_input_var.set(input_path)
+        if not os.path.exists(input_path):
+            messagebox.showerror("Missing file", "Input CSV file was not found.")
+            return
+
+        args = [os.path.join("analysis", "plot_results.py"), "--input", input_path]
+        output_path = self.analysis_output_var.get().strip()
+        if output_path:
+            output_abs = self._resolve_project_path(output_path, DEFAULT_ANALYSIS_PLOT)
+            self.analysis_output_var.set(output_abs)
+            args += ["--output", output_abs]
+        self._run_analysis_script("Plot Generator", args)
+
+    def load_csv_table_and_plot(self) -> None:
+        csv_path = self._resolve_project_path(self.analysis_input_var.get().strip(), DEFAULT_OUTPUT_CSV)
+        self.analysis_input_var.set(csv_path)
+        if not os.path.exists(csv_path):
+            messagebox.showerror("Missing file", "Input CSV file was not found.")
+            return
+
+        rounds: list[float] = []
+        offsets: list[float] = []
+        delays: list[float] = []
+
+        for item in self.analysis_tree.get_children():
+            self.analysis_tree.delete(item)
+
+        with open(csv_path, "r", newline="", encoding="utf-8") as csv_file:
+            reader = csv.DictReader(csv_file)
+            for row in reader:
+                try:
+                    round_val = float(row.get("round", 0))
+                    offset_val = float(row.get("offset", 0))
+                    delay_val = float(row.get("delay", 0))
+                    elapsed_val = float(row.get("elapsed", 0))
+                except (TypeError, ValueError):
+                    continue
+
+                rounds.append(round_val)
+                offsets.append(offset_val)
+                delays.append(delay_val)
+                self.analysis_tree.insert(
+                    "",
+                    "end",
+                    values=(f"{round_val:.0f}", f"{offset_val:.6f}", f"{delay_val:.6f}", f"{elapsed_val:.3f}"),
+                )
+
+        self.ax_offset.clear()
+        self.ax_delay.clear()
+
+        if rounds:
+            self.ax_offset.plot(rounds, offsets, marker="o", color="#22D3EE")
+            self.ax_offset.set_title("Offset Trend")
+            self.ax_offset.set_ylabel("Offset (s)")
+            self.ax_offset.grid(alpha=0.3)
+
+            self.ax_delay.plot(rounds, delays, marker="s", color="#F97316")
+            self.ax_delay.set_title("Delay Trend")
+            self.ax_delay.set_xlabel("Round")
+            self.ax_delay.set_ylabel("Delay (s)")
+            self.ax_delay.grid(alpha=0.3)
+        else:
+            self.ax_offset.text(0.5, 0.5, "No valid rows", ha="center", va="center")
+            self.ax_delay.text(0.5, 0.5, "No valid rows", ha="center", va="center")
+
+        self.figure.tight_layout(pad=1.8)
+        self.canvas.draw_idle()
+
+    def _choose_input_csv(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Select sync_data.csv",
+            initialdir=os.path.join(PROJECT_ROOT, "results"),
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if selected:
+            self.analysis_input_var.set(selected)
+
+    def _choose_output_path(self) -> None:
+        selected = filedialog.asksaveasfilename(
+            title="Select output CSV",
+            defaultextension=".csv",
+            initialdir=os.path.join(PROJECT_ROOT, "results"),
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if selected:
+            self.output_var.set(selected)
 
     def _handle_error(self, message: str) -> None:
         self._set_running_ui(False)
