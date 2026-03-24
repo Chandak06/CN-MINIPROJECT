@@ -311,7 +311,7 @@ class ClockSyncGUI(tk.Tk):
     def _on_live_time_synced(self, offset: float, delay: float, source: str) -> None:
         self.live_offset_seconds = offset
         self.live_synced = True
-            self.live_ntp_source_var.set(str(source))
+        self.live_ntp_source_var.set(str(source))
         self.live_time_status_var.set(f"Synced to server (delay {delay:.4f}s, offset {offset:.4f}s, source {source})")
         self._append_log(f"[Live Time] Updated from server. Delay={delay:.6f}s Offset={offset:.6f}s Source={source}")
 
@@ -320,7 +320,7 @@ class ClockSyncGUI(tk.Tk):
         messagebox.showerror("Live Time Sync Failed", message)
 
     def reset_live_time_to_local(self) -> None:
-            self.live_ntp_source_var.set("-")
+        self.live_ntp_source_var.set("-")
         self.live_synced = False
         self.live_offset_seconds = 0.0
         self.live_time_status_var.set("Using local clock")
