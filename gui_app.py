@@ -34,6 +34,9 @@ class ClockSyncGUI(tk.Tk):
         self.processes: dict[str, ManagedProcess] = {}
         self.log_queue: queue.Queue[str] = queue.Queue()
 
+        self.live_local_time_var = tk.StringVar(value="-")
+        self.live_ntp_time_var = tk.StringVar(value="-")
+        self.live_ntp_source_var = tk.StringVar(value="-")
         self.live_time_var = tk.StringVar(value="-")
         self.live_time_status_var = tk.StringVar(value="Using local clock")
         self.live_server_host_var = tk.StringVar(value="127.0.0.1")
@@ -201,15 +204,35 @@ class ClockSyncGUI(tk.Tk):
         )
         ttk.Button(actions, text="Use Local Clock", command=self.reset_live_time_to_local).pack(side="left")
 
-        panel = ttk.Frame(outer, style="AltPanel.TFrame", padding=16)
-        panel.pack(fill="x", pady=(14, 0))
-
-        ttk.Label(panel, text="Displayed Time", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
-        ttk.Label(panel, textvariable=self.live_time_var, style="PanelLabel.TLabel", font=("Consolas", 16)).grid(
+        # Local System Time
+        local_panel = ttk.Frame(outer, style="AltPanel.TFrame", padding=16)
+        local_panel.pack(fill="x", pady=(14, 0))
+        ttk.Label(local_panel, text="Local System Clock", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(local_panel, textvariable=self.live_local_time_var, style="PanelLabel.TLabel", font=("Consolas", 18, "bold")).grid(
             row=0, column=1, sticky="w"
         )
-        ttk.Label(panel, text="Status", style="PanelLabel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
-        ttk.Label(panel, textvariable=self.live_time_status_var, style="PanelLabel.TLabel").grid(
+
+        # NTP Server Time with Source
+        ntp_panel = ttk.Frame(outer, style="AltPanel.TFrame", padding=16)
+        ntp_panel.pack(fill="x", pady=6)
+        ttk.Label(ntp_panel, text="NTP Protocol Time (Server Time)", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(ntp_panel, textvariable=self.live_ntp_time_var, style="PanelLabel.TLabel", font=("Consolas", 18, "bold")).grid(
+            row=0, column=1, sticky="w"
+        )
+        ttk.Label(ntp_panel, text="Sync Source", style="PanelLabel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(8, 0))
+        ttk.Label(ntp_panel, textvariable=self.live_ntp_source_var, style="PanelLabel.TLabel").grid(
+            row=1, column=1, sticky="w", pady=(8, 0)
+        )
+
+        # Time from Querying Server
+        synced_panel = ttk.Frame(outer, style="AltPanel.TFrame", padding=16)
+        synced_panel.pack(fill="x", pady=(0, 6))
+        ttk.Label(synced_panel, text="Server Query Result", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(synced_panel, textvariable=self.live_time_var, style="PanelLabel.TLabel", font=("Consolas", 16)).grid(
+            row=0, column=1, sticky="w"
+        )
+        ttk.Label(synced_panel, text="Status", style="PanelLabel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
+        ttk.Label(synced_panel, textvariable=self.live_time_status_var, style="PanelLabel.TLabel").grid(
             row=1, column=1, sticky="w", pady=(10, 0)
         )
 
@@ -217,7 +240,19 @@ class ClockSyncGUI(tk.Tk):
         return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
     def _tick_live_time(self) -> None:
-        now = time.time() + (self.live_offset_seconds if self.live_synced else 0.0)
+        # Display local system time
+        local_now = time.time()
+        self.live_local_time_var.set(self._format_clock(local_now))
+        
+        # Display NTP server time (from last successful server query)
+        if self.live_synced and self.live_offset_seconds != 0.0:
+            ntp_now = local_now + self.live_offset_seconds
+            self.live_ntp_time_var.set(self._format_clock(ntp_now))
+        else:
+            self.live_ntp_time_var.set(self._format_clock(local_now))
+        
+        # Display combined result
+        now = local_now + (self.live_offset_seconds if self.live_synced else 0.0)
         self.live_time_var.set(self._format_clock(now))
         self.after(120, self._tick_live_time)
 
@@ -276,6 +311,7 @@ class ClockSyncGUI(tk.Tk):
     def _on_live_time_synced(self, offset: float, delay: float, source: str) -> None:
         self.live_offset_seconds = offset
         self.live_synced = True
+            self.live_ntp_source_var.set(str(source))
         self.live_time_status_var.set(f"Synced to server (delay {delay:.4f}s, offset {offset:.4f}s, source {source})")
         self._append_log(f"[Live Time] Updated from server. Delay={delay:.6f}s Offset={offset:.6f}s Source={source}")
 
@@ -284,6 +320,7 @@ class ClockSyncGUI(tk.Tk):
         messagebox.showerror("Live Time Sync Failed", message)
 
     def reset_live_time_to_local(self) -> None:
+            self.live_ntp_source_var.set("-")
         self.live_synced = False
         self.live_offset_seconds = 0.0
         self.live_time_status_var.set("Using local clock")
