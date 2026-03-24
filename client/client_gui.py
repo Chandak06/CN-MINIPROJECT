@@ -26,12 +26,12 @@ if PROJECT_ROOT not in sys.path:
 
 from sync_algorithm import compute_offset_and_delay
 from utils.packet_format import build_time_request, decode_packet, encode_packet, validate_reply
+from utils.statistics_tools import estimate_drift_rate, pick_best_sample_by_delay
 
 
 DEFAULT_HOST = os.getenv("CLOCKSYNC_SERVER_IP", "127.0.0.1")
 DEFAULT_PORT = 6000
 DEFAULT_ROUNDS = 10
-DEFAULT_DRIFT_SECONDS = 0.0
 DEFAULT_INTERVAL_SECONDS = 1.0
 BUFFER_SIZE = 2048
 SOCKET_TIMEOUT_SECONDS = 5
@@ -48,6 +48,7 @@ class SyncRow:
     delay: float
     receive_time: float
     elapsed: float
+    time_source: str
 
 
 class ClientSyncGUI(tk.Tk):
@@ -73,6 +74,7 @@ class ClientSyncGUI(tk.Tk):
         self.status_var = tk.StringVar(value="Idle")
         self.server_time_var = tk.StringVar(value="-")
         self.local_receive_var = tk.StringVar(value="-")
+        self.server_source_var = tk.StringVar(value="-")
         self.live_time_var = tk.StringVar(value="-")
         self.live_time_status_var = tk.StringVar(value="Using local clock")
         self.live_offset_seconds = 0.0
@@ -166,6 +168,12 @@ class ClientSyncGUI(tk.Tk):
         )
         ttk.Label(status_panel, textvariable=self.local_receive_var, style="PanelLabel.TLabel").grid(
             row=2, column=1, sticky="w", pady=(4, 0)
+        )
+        ttk.Label(status_panel, text="Server Time Source:", style="PanelLabel.TLabel").grid(
+            row=3, column=0, sticky="w", padx=(0, 8), pady=(4, 0)
+        )
+        ttk.Label(status_panel, textvariable=self.server_source_var, style="PanelLabel.TLabel").grid(
+            row=3, column=1, sticky="w", pady=(4, 0)
         )
         status_panel.columnconfigure(1, weight=1)
 
@@ -269,14 +277,16 @@ class ClientSyncGUI(tk.Tk):
                 raise ValueError("Response ID does not match request ID")
 
             sync_values = compute_offset_and_delay(t1=t1, t2=packet["T2"], t3=packet["T3"], t4=t4)
-            self.after(0, self._on_live_time_synced, float(sync_values["offset"]), float(sync_values["delay"]))
+            source = str(packet.get("time_source", "unknown"))
+            self.after(0, self._on_live_time_synced, float(sync_values["offset"]), float(sync_values["delay"]), source)
         except Exception as exc:
             self.after(0, self._on_live_time_sync_failed, str(exc))
 
-    def _on_live_time_synced(self, offset: float, delay: float) -> None:
+    def _on_live_time_synced(self, offset: float, delay: float, source: str) -> None:
         self.live_offset_seconds = offset
         self.live_synced = True
-        self.live_time_status_var.set(f"Synced to server (delay {delay:.4f}s, offset {offset:.4f}s)")
+        self.server_source_var.set(source)
+        self.live_time_status_var.set(f"Synced to server (delay {delay:.4f}s, offset {offset:.4f}s, source {source})")
 
     def _on_live_time_sync_failed(self, message: str) -> None:
         self.live_time_status_var.set("Sync failed; using local clock")
@@ -355,6 +365,37 @@ class ClientSyncGUI(tk.Tk):
     def _format_timestamp(self, ts: float) -> str:
         readable = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         return f"{readable} ({ts:.6f})"
+
+    def _compute_corrected_offset(self) -> float:
+        if not self.rows:
+            return 0.0
+        samples = [
+            {
+                "offset": row.offset,
+                "delay": row.delay,
+                "elapsed": row.elapsed,
+            }
+            for row in self.rows
+        ]
+        best = pick_best_sample_by_delay(samples)
+        drift_rate = estimate_drift_rate(samples)
+        elapsed_now = self.rows[-1].elapsed
+        return float(best["offset"] + (drift_rate * elapsed_now))
+
+    def _apply_post_sync_correction(self) -> None:
+        if not self.rows:
+            return
+
+        corrected_offset = self._compute_corrected_offset()
+        best_delay = min(row.delay for row in self.rows)
+        latest_source = self.rows[-1].time_source
+
+        self.live_offset_seconds = corrected_offset
+        self.live_synced = True
+        self.server_source_var.set(latest_source)
+        self.live_time_status_var.set(
+            f"Auto-corrected from {len(self.rows)} rounds (delay {best_delay:.4f}s, offset {corrected_offset:.4f}s, source {latest_source})"
+        )
 
     def _set_running_ui(self, running: bool) -> None:
         self.start_btn.configure(state="disabled" if running else "normal")
@@ -456,6 +497,7 @@ class ClientSyncGUI(tk.Tk):
             self.tree.delete(item)
         self.server_time_var.set("-")
         self.local_receive_var.set("-")
+        self.server_source_var.set("-")
         if not (self.worker and self.worker.is_alive()):
             self.status_var.set("Idle")
 
@@ -504,6 +546,7 @@ class ClientSyncGUI(tk.Tk):
                     delay=float(sync_values["delay"]),
                     receive_time=t4,
                     elapsed=time.perf_counter() - start_perf,
+                    time_source=str(packet.get("time_source", "unknown")),
                 )
                 completed += 1
 
@@ -534,12 +577,14 @@ class ClientSyncGUI(tk.Tk):
             self.after(0, self._finish_status, "Stopped")
         else:
             self.after(0, self._finish_status, f"Completed ({completed}/{rounds})")
+            self.after(0, self._apply_post_sync_correction)
             self.after(0, self.load_csv_table_and_plot)
 
     def _append_row(self, row: SyncRow) -> None:
         self.rows.append(row)
         self.server_time_var.set(self._format_timestamp(row.server_time))
         self.local_receive_var.set(self._format_timestamp(row.receive_time))
+        self.server_source_var.set(row.time_source)
         self.tree.insert(
             "",
             "end",
@@ -726,12 +771,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--server-hostname", default=None)
     parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
-    parser.add_argument(
-        "--drift",
-        type=float,
-        default=DEFAULT_DRIFT_SECONDS,
-        help="Deprecated. Drift simulation is disabled; this value is ignored.",
-    )
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_SECONDS)
     return parser.parse_args()
 

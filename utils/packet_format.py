@@ -14,14 +14,23 @@ def build_time_request(request_id: int, t1: float) -> Dict[str, Any]:
     }
 
 
-def build_time_reply(request_id: int, t2: float, t3: float, reference_time: float) -> Dict[str, Any]:
-    return {
+def build_time_reply(
+    request_id: int,
+    t2: float,
+    t3: float,
+    reference_time: float,
+    time_source: str | None = None,
+) -> Dict[str, Any]:
+    reply = {
         "type": TIME_REPLY,
         "id": request_id,
         "T2": t2,
         "T3": t3,
         "reference_time": reference_time,
     }
+    if time_source:
+        reply["time_source"] = time_source
+    return reply
 
 
 def encode_packet(packet: Dict[str, Any]) -> bytes:

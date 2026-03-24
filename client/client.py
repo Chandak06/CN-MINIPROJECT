@@ -31,7 +31,6 @@ REQUEST_INTERVAL_SECONDS = 1.0
 BUFFER_SIZE = 2048
 SOCKET_TIMEOUT_SECONDS = 5
 DEFAULT_ROUNDS = 10
-DEFAULT_DRIFT_SECONDS = 0.0
 DEFAULT_RESULTS = os.path.join(PROJECT_ROOT, "results", "sync_data.csv")
 CERT_FILE = os.path.join(PROJECT_ROOT, "security", "cert.pem")
 
@@ -42,14 +41,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--server-hostname", default=None)
     parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
-    parser.add_argument(
-        "--drift",
-        type=float,
-        default=DEFAULT_DRIFT_SECONDS,
-        help="Deprecated. Drift simulation is disabled; this value is ignored.",
-    )
     parser.add_argument("--output", default=DEFAULT_RESULTS)
     return parser.parse_args()
+
+
+def _format_timestamp(ts: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) + f".{int((ts % 1) * 1000):03d}"
+
+
+def _compute_corrected_offset(samples: List[Dict[str, float]]) -> float:
+    best = pick_best_sample_by_delay(samples)
+    drift_rate = estimate_drift_rate(samples)
+    elapsed_now = samples[-1]["elapsed"]
+    return best["offset"] + (drift_rate * elapsed_now)
 
 
 def save_results(path: str, rows: List[Dict[str, float]]) -> None:
@@ -93,11 +97,12 @@ def run_session(host: str, port: int, server_hostname: str, rounds: int) -> List
                     "delay": sync_values["delay"],
                     "elapsed": time.monotonic() - start_monotonic,
                     "reference_time": packet["reference_time"],
+                    "time_source": packet.get("time_source", "unknown"),
                 }
                 samples.append(sample)
 
                 print(
-                    f"Round {request_id}: offset={sample['offset']:.6f}s delay={sample['delay']:.6f}s"
+                    f"Round {request_id}: offset={sample['offset']:.6f}s delay={sample['delay']:.6f}s source={sample['time_source']}"
                 )
 
         time.sleep(REQUEST_INTERVAL_SECONDS)
@@ -112,12 +117,12 @@ def print_summary(samples: List[Dict[str, float]]) -> None:
 
     best = pick_best_sample_by_delay(samples)
     drift_rate = estimate_drift_rate(samples)
-    elapsed_now = samples[-1]["elapsed"]
-    corrected_offset = best["offset"] + (drift_rate * elapsed_now)
+    corrected_offset = _compute_corrected_offset(samples)
 
     raw_local_time = time.time()
     corrected_local_time = corrected_time(local_drift_seconds=0.0, offset=corrected_offset)
     reference_time = samples[-1]["reference_time"]
+    source = str(samples[-1].get("time_source", "unknown"))
 
     baseline_error = abs(raw_local_time - reference_time)
     corrected_error = abs(corrected_local_time - reference_time)
@@ -131,9 +136,13 @@ def print_summary(samples: List[Dict[str, float]]) -> None:
     print(f"Best sample offset: {best['offset']:.6f}s")
     print(f"Estimated drift rate: {drift_rate:.9f} sec/sec")
     print(f"Corrected offset used: {corrected_offset:.6f}s")
+    print(f"Server time source: {source}")
     print(f"Error before correction: {baseline_error:.6f}s")
     print(f"Error after correction: {corrected_error:.6f}s")
     print(f"Improvement: {improvement:.2f}%")
+    print(f"Server time (last reply): {_format_timestamp(reference_time)}")
+    print(f"Client corrected time   : {_format_timestamp(corrected_local_time)}")
+    print(f"Difference after correction: {abs(corrected_local_time - reference_time):.6f}s")
 
 
 def main() -> None:

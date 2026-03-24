@@ -267,16 +267,17 @@ class ClockSyncGUI(tk.Tk):
             t3 = float(packet["T3"])
             offset = ((t2 - t1) + (t3 - t4)) / 2.0
             delay = (t4 - t1) - (t3 - t2)
+            source = str(packet.get("time_source", "unknown"))
 
-            self.after(0, self._on_live_time_synced, offset, delay)
+            self.after(0, self._on_live_time_synced, offset, delay, source)
         except Exception as exc:
             self.after(0, self._on_live_time_sync_error, str(exc))
 
-    def _on_live_time_synced(self, offset: float, delay: float) -> None:
+    def _on_live_time_synced(self, offset: float, delay: float, source: str) -> None:
         self.live_offset_seconds = offset
         self.live_synced = True
-        self.live_time_status_var.set(f"Synced to server (delay {delay:.4f}s, offset {offset:.4f}s)")
-        self._append_log(f"[Live Time] Updated from server. Delay={delay:.6f}s Offset={offset:.6f}s")
+        self.live_time_status_var.set(f"Synced to server (delay {delay:.4f}s, offset {offset:.4f}s, source {source})")
+        self._append_log(f"[Live Time] Updated from server. Delay={delay:.6f}s Offset={offset:.6f}s Source={source}")
 
     def _on_live_time_sync_error(self, message: str) -> None:
         self.live_time_status_var.set("Sync failed; using local clock")

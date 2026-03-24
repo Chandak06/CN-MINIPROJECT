@@ -69,6 +69,7 @@ def main() -> None:
                 t2=t2,
                 t3=t3,
                 reference_time=clock.now(),
+                time_source=clock.status(),
             )
             server_socket.sendto(encode_packet(reply), addr)
             print(f"Responded to {addr} id={request_id} source={clock.status()}")
