@@ -31,7 +31,7 @@ REQUEST_INTERVAL_SECONDS = 1.0
 BUFFER_SIZE = 2048
 SOCKET_TIMEOUT_SECONDS = 5
 DEFAULT_ROUNDS = 10
-DEFAULT_DRIFT_SECONDS = 0.5
+DEFAULT_DRIFT_SECONDS = 0.0
 DEFAULT_RESULTS = os.path.join(PROJECT_ROOT, "results", "sync_data.csv")
 CERT_FILE = os.path.join(PROJECT_ROOT, "security", "cert.pem")
 
@@ -42,7 +42,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--server-hostname", default=None)
     parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
-    parser.add_argument("--drift", type=float, default=DEFAULT_DRIFT_SECONDS)
+    parser.add_argument(
+        "--drift",
+        type=float,
+        default=DEFAULT_DRIFT_SECONDS,
+        help="Deprecated. Drift simulation is disabled; this value is ignored.",
+    )
     parser.add_argument("--output", default=DEFAULT_RESULTS)
     return parser.parse_args()
 
@@ -55,7 +60,7 @@ def save_results(path: str, rows: List[Dict[str, float]]) -> None:
         writer.writerows(rows)
 
 
-def run_session(host: str, port: int, server_hostname: str, rounds: int, local_drift: float) -> List[Dict[str, float]]:
+def run_session(host: str, port: int, server_hostname: str, rounds: int) -> List[Dict[str, float]]:
     context = ssl.create_default_context()
     context.load_verify_locations(CERT_FILE)
 
@@ -68,12 +73,12 @@ def run_session(host: str, port: int, server_hostname: str, rounds: int, local_d
             with context.wrap_socket(raw_socket, server_hostname=server_hostname) as secure_socket:
                 secure_socket.connect((host, port))
 
-                t1 = time.time() + local_drift
+                t1 = time.time()
                 request = build_time_request(request_id=request_id, t1=t1)
                 secure_socket.sendall(encode_packet(request))
 
                 response_data = secure_socket.recv(BUFFER_SIZE)
-                t4 = time.time() + local_drift
+                t4 = time.time()
 
                 packet = decode_packet(response_data)
                 validate_reply(packet)
@@ -100,7 +105,7 @@ def run_session(host: str, port: int, server_hostname: str, rounds: int, local_d
     return samples
 
 
-def print_summary(samples: List[Dict[str, float]], local_drift: float) -> None:
+def print_summary(samples: List[Dict[str, float]]) -> None:
     if not samples:
         print("No successful synchronization samples were collected.")
         return
@@ -110,8 +115,8 @@ def print_summary(samples: List[Dict[str, float]], local_drift: float) -> None:
     elapsed_now = samples[-1]["elapsed"]
     corrected_offset = best["offset"] + (drift_rate * elapsed_now)
 
-    raw_local_time = time.time() + local_drift
-    corrected_local_time = corrected_time(local_drift_seconds=local_drift, offset=corrected_offset)
+    raw_local_time = time.time()
+    corrected_local_time = corrected_time(local_drift_seconds=0.0, offset=corrected_offset)
     reference_time = samples[-1]["reference_time"]
 
     baseline_error = abs(raw_local_time - reference_time)
@@ -140,7 +145,6 @@ def main() -> None:
             port=args.port,
             server_hostname=server_hostname,
             rounds=max(1, args.rounds),
-            local_drift=args.drift,
         )
     except ConnectionRefusedError:
         print(
@@ -163,7 +167,7 @@ def main() -> None:
         print(f"ERROR: Network error — {exc}")
         sys.exit(1)
     save_results(args.output, samples)
-    print_summary(samples, args.drift)
+    print_summary(samples)
 
 
 if __name__ == "__main__":

@@ -1,15 +1,18 @@
 import csv
 import argparse
+import json
 import os
 import queue
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
 from dataclasses import dataclass
+from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -34,6 +37,14 @@ class ClockSyncGUI(tk.Tk):
 
         self.processes: dict[str, ManagedProcess] = {}
         self.log_queue: queue.Queue[str] = queue.Queue()
+
+        self.live_time_var = tk.StringVar(value="-")
+        self.live_time_status_var = tk.StringVar(value="Using local clock")
+        self.live_server_host_var = tk.StringVar(value="127.0.0.1")
+        self.live_server_port_var = tk.StringVar(value="6000")
+        self.live_server_hostname_var = tk.StringVar(value="127.0.0.1")
+        self.live_offset_seconds = 0.0
+        self.live_synced = False
 
         self._configure_style()
         self._build_layout()
@@ -90,17 +101,22 @@ class ClockSyncGUI(tk.Tk):
         self.dashboard_tab = ttk.Frame(notebook)
         self.server_tab = ttk.Frame(notebook)
         self.client_tab = ttk.Frame(notebook)
+        self.live_time_tab = ttk.Frame(notebook)
         self.analysis_tab = ttk.Frame(notebook)
 
         notebook.add(self.dashboard_tab, text="Dashboard")
         notebook.add(self.server_tab, text="Server Control")
         notebook.add(self.client_tab, text="Client Sync")
+        notebook.add(self.live_time_tab, text="Live Time")
         notebook.add(self.analysis_tab, text="Analysis")
 
         self._build_dashboard_tab()
         self._build_server_tab()
         self._build_client_tab()
+        self._build_live_time_tab()
         self._build_analysis_tab()
+
+        self.after(120, self._tick_live_time)
 
     def _build_dashboard_tab(self) -> None:
         frame = ttk.Frame(self.dashboard_tab, style="Panel.TFrame", padding=14)
@@ -195,18 +211,16 @@ class ClockSyncGUI(tk.Tk):
         self.client_port_var = tk.StringVar(value="6000")
         self.client_server_hostname_var = tk.StringVar(value="127.0.0.1")
         self.client_rounds_var = tk.StringVar(value="10")
-        self.client_drift_var = tk.StringVar(value="0.5")
         self.client_output_var = tk.StringVar(value=os.path.join(PROJECT_ROOT, "results", "sync_data.csv"))
 
         self._build_labeled_entry(client_group, "Server Host", self.client_host_var, 0)
         self._build_labeled_entry(client_group, "Server Port", self.client_port_var, 1)
         self._build_labeled_entry(client_group, "TLS Hostname", self.client_server_hostname_var, 2)
         self._build_labeled_entry(client_group, "Rounds", self.client_rounds_var, 3)
-        self._build_labeled_entry(client_group, "Simulated Drift (s)", self.client_drift_var, 4)
-        self._build_labeled_entry(client_group, "Output CSV", self.client_output_var, 5)
+        self._build_labeled_entry(client_group, "Output CSV", self.client_output_var, 4)
 
         row = ttk.Frame(client_group)
-        row.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        row.grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Button(row, text="Choose Output", command=self._choose_output_path).pack(side="left", padx=(0, 8))
         ttk.Button(row, text="Run Client Sync", style="Primary.TButton", command=self.run_client).pack(side="left", padx=(0, 8))
         ttk.Button(row, text="Stop Client", command=self.stop_client).pack(side="left")
@@ -265,6 +279,110 @@ class ClockSyncGUI(tk.Tk):
         self.figure.tight_layout(pad=1.8)
         self.canvas = FigureCanvasTkAgg(self.figure, master=plot_panel)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def _build_live_time_tab(self) -> None:
+        outer = ttk.Frame(self.live_time_tab, style="Panel.TFrame", padding=14)
+        outer.pack(fill="both", expand=True, padx=10, pady=10)
+
+        cfg = ttk.LabelFrame(outer, text="Server Time Source", padding=12)
+        cfg.pack(fill="x")
+
+        self._build_labeled_entry(cfg, "Server Host", self.live_server_host_var, 0)
+        self._build_labeled_entry(cfg, "Server Port", self.live_server_port_var, 1)
+        self._build_labeled_entry(cfg, "TLS Hostname", self.live_server_hostname_var, 2)
+
+        actions = ttk.Frame(cfg)
+        actions.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(actions, text="Sync From Server", style="Primary.TButton", command=self.sync_live_time).pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Button(actions, text="Use Local Clock", command=self.reset_live_time_to_local).pack(side="left")
+
+        panel = ttk.Frame(outer, style="AltPanel.TFrame", padding=16)
+        panel.pack(fill="x", pady=(14, 0))
+
+        ttk.Label(panel, text="Displayed Time", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(panel, textvariable=self.live_time_var, style="PanelLabel.TLabel", font=("Consolas", 16)).grid(
+            row=0, column=1, sticky="w"
+        )
+        ttk.Label(panel, text="Status", style="PanelLabel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
+        ttk.Label(panel, textvariable=self.live_time_status_var, style="PanelLabel.TLabel").grid(
+            row=1, column=1, sticky="w", pady=(10, 0)
+        )
+
+    def _format_clock(self, ts: float) -> str:
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+    def _tick_live_time(self) -> None:
+        now = time.time() + (self.live_offset_seconds if self.live_synced else 0.0)
+        self.live_time_var.set(self._format_clock(now))
+        self.after(120, self._tick_live_time)
+
+    def sync_live_time(self) -> None:
+        port = self._validate_port(self.live_server_port_var.get(), "6000")
+        if port is None:
+            return
+
+        host = self.live_server_host_var.get().strip() or "127.0.0.1"
+        server_hostname = self.live_server_hostname_var.get().strip() or host
+        cert_path = os.path.join(PROJECT_ROOT, "security", "cert.pem")
+        if not os.path.exists(cert_path):
+            messagebox.showerror("Missing certificate", "security/cert.pem not found. Run generate_cert.py first.")
+            return
+
+        self.live_time_status_var.set("Syncing from server...")
+        worker = threading.Thread(
+            target=self._sync_live_time_worker,
+            args=(host, int(port), server_hostname, cert_path),
+            daemon=True,
+        )
+        worker.start()
+
+    def _sync_live_time_worker(self, host: str, port: int, server_hostname: str, cert_path: str) -> None:
+        try:
+            context = ssl.create_default_context()
+            context.load_verify_locations(cert_path)
+
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_socket:
+                raw_socket.settimeout(5)
+                with context.wrap_socket(raw_socket, server_hostname=server_hostname) as secure_socket:
+                    secure_socket.connect((host, port))
+                    request_id = int(time.time() * 1000) % 1_000_000
+                    t1 = time.time()
+                    request = {"type": "TIME_REQUEST", "id": request_id, "T1": t1}
+                    secure_socket.sendall(json.dumps(request).encode("utf-8"))
+                    response_data = secure_socket.recv(2048)
+                    t4 = time.time()
+
+            packet = json.loads(response_data.decode("utf-8"))
+            if packet.get("type") != "TIME_REPLY":
+                raise ValueError("Invalid reply type from server")
+            if int(packet.get("id", -1)) != request_id:
+                raise ValueError("Mismatched response id")
+
+            t2 = float(packet["T2"])
+            t3 = float(packet["T3"])
+            offset = ((t2 - t1) + (t3 - t4)) / 2.0
+            delay = (t4 - t1) - (t3 - t2)
+
+            self.after(0, self._on_live_time_synced, offset, delay)
+        except Exception as exc:
+            self.after(0, self._on_live_time_sync_error, str(exc))
+
+    def _on_live_time_synced(self, offset: float, delay: float) -> None:
+        self.live_offset_seconds = offset
+        self.live_synced = True
+        self.live_time_status_var.set(f"Synced to server (delay {delay:.4f}s, offset {offset:.4f}s)")
+        self._append_log(f"[Live Time] Updated from server. Delay={delay:.6f}s Offset={offset:.6f}s")
+
+    def _on_live_time_sync_error(self, message: str) -> None:
+        self.live_time_status_var.set("Sync failed; using local clock")
+        messagebox.showerror("Live Time Sync Failed", message)
+
+    def reset_live_time_to_local(self) -> None:
+        self.live_synced = False
+        self.live_offset_seconds = 0.0
+        self.live_time_status_var.set("Using local clock")
 
     def _build_labeled_entry(self, parent: ttk.Widget, label: str, variable: tk.StringVar, row: int) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=5)
@@ -500,7 +618,10 @@ class ClockSyncGUI(tk.Tk):
             return
 
         port_num = int(port)
-        target_host = (self.client_host_var.get().strip() or "127.0.0.1").lower()
+        client_host = self.client_host_var.get().strip() or "127.0.0.1"
+        client_server_hostname = self.client_server_hostname_var.get().strip() or client_host
+
+        target_host = client_host.lower()
         if target_host in {"127.0.0.1", "localhost", "::1"} and not self._is_running("tls_server"):
             self._append_log("[Launcher] TLS Server is not running for local client target; starting TLS Server automatically...")
             self.start_tls_server()
@@ -549,8 +670,6 @@ class ClockSyncGUI(tk.Tk):
             client_server_hostname,
             "--rounds",
             rounds,
-            "--drift",
-            self.client_drift_var.get().strip() or "0.5",
             "--output",
             output_abs_path,
         ]
