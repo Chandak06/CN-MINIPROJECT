@@ -59,7 +59,7 @@ def _compute_corrected_offset(samples: List[Dict[str, float]]) -> float:
 def save_results(path: str, rows: List[Dict[str, float]]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=["round", "offset", "delay", "elapsed", "reference_time"])
+        writer = csv.DictWriter(csv_file, fieldnames=["round", "offset", "delay", "elapsed", "reference_time", "time_source"])
         writer.writeheader()
         writer.writerows(rows)
 
