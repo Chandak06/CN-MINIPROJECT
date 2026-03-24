@@ -1,5 +1,6 @@
 import csv
 import argparse
+import json
 import os
 import socket
 import ssl
@@ -30,7 +31,7 @@ from utils.packet_format import build_time_request, decode_packet, encode_packet
 DEFAULT_HOST = os.getenv("CLOCKSYNC_SERVER_IP", "127.0.0.1")
 DEFAULT_PORT = 6000
 DEFAULT_ROUNDS = 10
-DEFAULT_DRIFT_SECONDS = 0.5
+DEFAULT_DRIFT_SECONDS = 0.0
 DEFAULT_INTERVAL_SECONDS = 1.0
 BUFFER_SIZE = 2048
 SOCKET_TIMEOUT_SECONDS = 5
@@ -64,7 +65,6 @@ class ClientSyncGUI(tk.Tk):
         self.port_var = tk.StringVar(value=str(DEFAULT_PORT))
         self.hostname_var = tk.StringVar(value=DEFAULT_HOST)
         self.rounds_var = tk.StringVar(value=str(DEFAULT_ROUNDS))
-        self.drift_var = tk.StringVar(value=str(DEFAULT_DRIFT_SECONDS))
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SECONDS))
         self.output_var = tk.StringVar(value=DEFAULT_OUTPUT_CSV)
         self.analysis_input_var = tk.StringVar(value=DEFAULT_OUTPUT_CSV)
@@ -73,9 +73,14 @@ class ClientSyncGUI(tk.Tk):
         self.status_var = tk.StringVar(value="Idle")
         self.server_time_var = tk.StringVar(value="-")
         self.local_receive_var = tk.StringVar(value="-")
+        self.live_time_var = tk.StringVar(value="-")
+        self.live_time_status_var = tk.StringVar(value="Using local clock")
+        self.live_offset_seconds = 0.0
+        self.live_synced = False
 
         self._configure_style()
         self._build_ui()
+        self.after(120, self._tick_live_time)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _configure_style(self) -> None:
@@ -110,11 +115,14 @@ class ClientSyncGUI(tk.Tk):
         notebook.pack(fill="both", expand=True)
 
         self.sync_tab = ttk.Frame(notebook)
+        self.live_time_tab = ttk.Frame(notebook)
         self.analysis_tab = ttk.Frame(notebook)
         notebook.add(self.sync_tab, text="Client Sync")
+        notebook.add(self.live_time_tab, text="Live Time")
         notebook.add(self.analysis_tab, text="Analysis")
 
         self._build_sync_tab()
+        self._build_live_time_tab()
         self._build_analysis_tab()
 
     def _build_sync_tab(self) -> None:
@@ -128,12 +136,11 @@ class ClientSyncGUI(tk.Tk):
         self._entry_row(config, "Server Port", self.port_var, 1)
         self._entry_row(config, "TLS Hostname", self.hostname_var, 2)
         self._entry_row(config, "Rounds", self.rounds_var, 3)
-        self._entry_row(config, "Simulated Drift (s)", self.drift_var, 4)
-        self._entry_row(config, "Interval Between Rounds (s)", self.interval_var, 5)
-        self._entry_row(config, "Output CSV", self.output_var, 6)
+        self._entry_row(config, "Interval Between Rounds (s)", self.interval_var, 4)
+        self._entry_row(config, "Output CSV", self.output_var, 5)
 
         actions = ttk.Frame(config)
-        actions.grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        actions.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self.choose_output_btn = ttk.Button(actions, text="Choose Output", command=self._choose_output_path)
         self.start_btn = ttk.Button(actions, text="Start Sync", command=self.start_sync)
         self.stop_btn = ttk.Button(actions, text="Stop", command=self.stop_sync, state="disabled")
@@ -189,6 +196,103 @@ class ClientSyncGUI(tk.Tk):
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+
+    def _build_live_time_tab(self) -> None:
+        outer = ttk.Frame(self.live_time_tab)
+        outer.pack(fill="both", expand=True)
+
+        config = ttk.LabelFrame(outer, text="Server Time Source", padding=12)
+        config.pack(fill="x")
+
+        self._entry_row(config, "Server Host", self.host_var, 0)
+        self._entry_row(config, "Server Port", self.port_var, 1)
+        self._entry_row(config, "TLS Hostname", self.hostname_var, 2)
+
+        actions = ttk.Frame(config)
+        actions.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(actions, text="Sync From Server", command=self.sync_live_time).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Use Local Clock", command=self.reset_live_time_to_local).pack(side="left")
+
+        panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
+        panel.pack(fill="x", pady=(12, 0))
+        ttk.Label(panel, text="Displayed Time", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(panel, textvariable=self.live_time_var, style="PanelLabel.TLabel", font=("Consolas", 16)).grid(
+            row=0, column=1, sticky="w"
+        )
+        ttk.Label(panel, text="Status", style="PanelLabel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(8, 0))
+        ttk.Label(panel, textvariable=self.live_time_status_var, style="PanelLabel.TLabel").grid(
+            row=1, column=1, sticky="w", pady=(8, 0)
+        )
+
+    def _tick_live_time(self) -> None:
+        now = time.time() + (self.live_offset_seconds if self.live_synced else 0.0)
+        self.live_time_var.set(datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3])
+        self.after(120, self._tick_live_time)
+
+    def sync_live_time(self) -> None:
+        try:
+            host = self.host_var.get().strip() or DEFAULT_HOST
+            port = int(self.port_var.get().strip())
+            if port < 1 or port > 65535:
+                raise ValueError
+            server_hostname = self.hostname_var.get().strip() or host
+        except ValueError:
+            messagebox.showerror("Invalid input", "Please enter valid host/port values.")
+            return
+
+        self.live_time_status_var.set("Syncing from server...")
+        worker = threading.Thread(
+            target=self._sync_live_time_worker,
+            args=(host, port, server_hostname),
+            daemon=True,
+        )
+        worker.start()
+
+    def _sync_live_time_worker(self, host: str, port: int, server_hostname: str) -> None:
+        try:
+            context = ssl.create_default_context()
+            context.load_verify_locations(CERT_FILE)
+
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_socket:
+                raw_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
+                with context.wrap_socket(raw_socket, server_hostname=server_hostname) as secure_socket:
+                    secure_socket.connect((host, port))
+                    request_id = int(time.time() * 1000) % 1_000_000
+                    t1 = time.time()
+                    secure_socket.sendall(encode_packet(build_time_request(request_id=request_id, t1=t1)))
+                    response_data = secure_socket.recv(BUFFER_SIZE)
+                    t4 = time.time()
+
+            packet = decode_packet(response_data)
+            validate_reply(packet)
+            if int(packet.get("id", -1)) != request_id:
+                raise ValueError("Response ID does not match request ID")
+
+            sync_values = compute_offset_and_delay(t1=t1, t2=packet["T2"], t3=packet["T3"], t4=t4)
+            self.after(0, self._on_live_time_synced, float(sync_values["offset"]), float(sync_values["delay"]))
+        except Exception as exc:
+            self.after(0, self._on_live_time_sync_failed, str(exc))
+
+    def _on_live_time_synced(self, offset: float, delay: float) -> None:
+        self.live_offset_seconds = offset
+        self.live_synced = True
+        self.live_time_status_var.set(f"Synced to server (delay {delay:.4f}s, offset {offset:.4f}s)")
+
+    def _on_live_time_sync_failed(self, message: str) -> None:
+        self.live_time_status_var.set("Sync failed; using local clock")
+        messagebox.showerror("Live Time Sync Failed", message)
+
+    def reset_live_time_to_local(self) -> None:
+        self.live_synced = False
+        self.live_offset_seconds = 0.0
+        self.live_time_status_var.set("Using local clock")
+
+    def _is_server_reachable(self, host: str, port: int, timeout_seconds: float = 2.0) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=timeout_seconds):
+                return True
+        except OSError:
+            return False
 
     def _build_analysis_tab(self) -> None:
         outer = ttk.Frame(self.analysis_tab)
@@ -298,15 +402,22 @@ class ClientSyncGUI(tk.Tk):
             if port < 1 or port > 65535:
                 raise ValueError
             rounds = max(1, int(self.rounds_var.get().strip()))
-            drift = float(self.drift_var.get().strip())
             interval_seconds = max(0.0, float(self.interval_var.get().strip()))
             server_hostname = self.hostname_var.get().strip() or host
         except ValueError:
-            messagebox.showerror("Invalid input", "Please enter valid host/port/rounds/drift/interval values.")
+            messagebox.showerror("Invalid input", "Please enter valid host/port/rounds/interval values.")
             return
 
         if not os.path.exists(CERT_FILE):
             messagebox.showerror("Missing certificate", "security/cert.pem not found. Run generate_cert.py first.")
+            return
+
+        if not self._is_server_reachable(host, port):
+            messagebox.showerror(
+                "Server unavailable",
+                f"No server is reachable at {host}:{port}. Start secure_server.py first.",
+            )
+            self.status_var.set("Server unavailable")
             return
 
         output_path = self._resolve_project_path(self.output_var.get().strip(), DEFAULT_OUTPUT_CSV)
@@ -330,7 +441,7 @@ class ClientSyncGUI(tk.Tk):
 
         self.worker = threading.Thread(
             target=self._run_sync_session,
-            args=(host, port, server_hostname, rounds, drift, interval_seconds),
+            args=(host, port, server_hostname, rounds, interval_seconds),
             daemon=True,
         )
         self.worker.start()
@@ -354,7 +465,6 @@ class ClientSyncGUI(tk.Tk):
         port: int,
         server_hostname: str,
         rounds: int,
-        local_drift: float,
         interval_seconds: float,
     ) -> None:
         context = ssl.create_default_context()
@@ -373,12 +483,12 @@ class ClientSyncGUI(tk.Tk):
                     with context.wrap_socket(raw_socket, server_hostname=server_hostname) as secure_socket:
                         secure_socket.connect((host, port))
 
-                        t1 = time.time() + local_drift
+                        t1 = time.time()
                         request = build_time_request(request_id=request_id, t1=t1)
                         secure_socket.sendall(encode_packet(request))
 
                         response_data = secure_socket.recv(BUFFER_SIZE)
-                        t4 = time.time() + local_drift
+                        t4 = time.time()
 
                 packet = decode_packet(response_data)
                 validate_reply(packet)
@@ -616,7 +726,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--server-hostname", default=None)
     parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
-    parser.add_argument("--drift", type=float, default=DEFAULT_DRIFT_SECONDS)
+    parser.add_argument(
+        "--drift",
+        type=float,
+        default=DEFAULT_DRIFT_SECONDS,
+        help="Deprecated. Drift simulation is disabled; this value is ignored.",
+    )
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_SECONDS)
     return parser.parse_args()
 
@@ -628,7 +743,6 @@ def main() -> None:
     app.port_var.set(str(args.port))
     app.hostname_var.set(args.server_hostname or args.host)
     app.rounds_var.set(str(args.rounds))
-    app.drift_var.set(str(args.drift))
     app.interval_var.set(str(args.interval))
     app.mainloop()
 

@@ -621,19 +621,13 @@ class ClockSyncGUI(tk.Tk):
         client_host = self.client_host_var.get().strip() or "127.0.0.1"
         client_server_hostname = self.client_server_hostname_var.get().strip() or client_host
 
-        target_host = client_host.lower()
-        if target_host in {"127.0.0.1", "localhost", "::1"} and not self._is_running("tls_server"):
-            self._append_log("[Launcher] TLS Server is not running for local client target; starting TLS Server automatically...")
-            self.start_tls_server()
-            if not self._is_running("tls_server"):
-                # start_tls_server already showed detailed error (e.g., missing certs)
-                return
-            if not self._wait_for_tcp_port("127.0.0.1", port_num, timeout_seconds=4.0):
-                messagebox.showerror(
-                    "TLS server not ready",
-                    "TLS Server was started but did not open the client target port in time. Check the server log for startup errors.",
-                )
-                return
+        if not self._wait_for_tcp_port(client_host, port_num, timeout_seconds=2.0):
+            messagebox.showerror(
+                "Server unavailable",
+                f"No server is reachable at {client_host}:{port_num}. Start secure_server.py first.",
+            )
+            self._append_log(f"[Launcher] Client start blocked: server unreachable at {client_host}:{port_num}")
+            return
 
         rounds_raw = self.client_rounds_var.get().strip() or "10"
         try:
