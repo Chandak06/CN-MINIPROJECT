@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import ssl
+import statistics
 import subprocess
 import sys
 import threading
@@ -26,7 +27,6 @@ if PROJECT_ROOT not in sys.path:
 
 from sync_algorithm import compute_offset_and_delay
 from utils.packet_format import build_time_request, decode_packet, encode_packet, validate_reply
-from utils.statistics_tools import estimate_drift_rate, pick_best_sample_by_delay
 
 
 DEFAULT_HOST = os.getenv("CLOCKSYNC_SERVER_IP", "127.0.0.1")
@@ -75,6 +75,8 @@ class ClientSyncGUI(tk.Tk):
         self.server_time_var = tk.StringVar(value="-")
         self.local_receive_var = tk.StringVar(value="-")
         self.server_source_var = tk.StringVar(value="-")
+        self.live_local_time_var = tk.StringVar(value="-")
+        self.live_offset_display_var = tk.StringVar(value="-")
         self.live_time_var = tk.StringVar(value="-")
         self.live_time_status_var = tk.StringVar(value="Using local clock")
         self.live_offset_seconds = 0.0
@@ -221,20 +223,55 @@ class ClientSyncGUI(tk.Tk):
         ttk.Button(actions, text="Sync From Server", command=self.sync_live_time).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Use Local Clock", command=self.reset_live_time_to_local).pack(side="left")
 
-        panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
-        panel.pack(fill="x", pady=(12, 0))
-        ttk.Label(panel, text="Displayed Time", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
-        ttk.Label(panel, textvariable=self.live_time_var, style="PanelLabel.TLabel", font=("Consolas", 16)).grid(
+        # Local Clock Display
+        local_panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
+        local_panel.pack(fill="x", pady=(12, 0))
+        ttk.Label(local_panel, text="Local Clock (Client Time)", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(local_panel, textvariable=self.live_local_time_var, style="PanelLabel.TLabel", font=("Consolas", 18, "bold")).grid(
             row=0, column=1, sticky="w"
         )
-        ttk.Label(panel, text="Status", style="PanelLabel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 10), pady=(8, 0))
-        ttk.Label(panel, textvariable=self.live_time_status_var, style="PanelLabel.TLabel").grid(
-            row=1, column=1, sticky="w", pady=(8, 0)
+
+        # Offset Display
+        offset_panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
+        offset_panel.pack(fill="x", pady=6)
+        ttk.Label(offset_panel, text="Offset Added/Subtracted", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(offset_panel, textvariable=self.live_offset_display_var, style="PanelLabel.TLabel", font=("Consolas", 14)).grid(
+            row=0, column=1, sticky="w"
+        )
+
+        # Server Synced Time Display
+        synced_panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
+        synced_panel.pack(fill="x", pady=(0, 12))
+        ttk.Label(synced_panel, text="Server Synced Time (Local + Offset)", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(synced_panel, textvariable=self.live_time_var, style="PanelLabel.TLabel", font=("Consolas", 18, "bold")).grid(
+            row=0, column=1, sticky="w"
+        )
+
+        # Status Panel
+        status_panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
+        status_panel.pack(fill="x")
+        ttk.Label(status_panel, text="Status", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(status_panel, textvariable=self.live_time_status_var, style="PanelLabel.TLabel").grid(
+            row=0, column=1, sticky="w"
         )
 
     def _tick_live_time(self) -> None:
-        now = time.time() + (self.live_offset_seconds if self.live_synced else 0.0)
-        self.live_time_var.set(datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3])
+        now = time.time()
+        local_display = datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        self.live_local_time_var.set(local_display)
+        
+        # Update offset display
+        if self.live_synced and self.live_offset_seconds != 0.0:
+            sign = "+" if self.live_offset_seconds > 0 else "-"
+            self.live_offset_display_var.set(f"{sign} {abs(self.live_offset_seconds):.6f} seconds")
+        else:
+            self.live_offset_display_var.set("No sync applied (0.000000 seconds)")
+        
+        # Update synced time display
+        synced_now = now + (self.live_offset_seconds if self.live_synced else 0.0)
+        synced_display = datetime.fromtimestamp(synced_now).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        self.live_time_var.set(synced_display)
+        
         self.after(120, self._tick_live_time)
 
     def sync_live_time(self) -> None:
@@ -367,34 +404,25 @@ class ClientSyncGUI(tk.Tk):
         return f"{readable} ({ts:.6f})"
 
     def _compute_corrected_offset(self) -> float:
+        """Compute corrected offset using mean offset from all samples."""
         if not self.rows:
             return 0.0
-        samples = [
-            {
-                "offset": row.offset,
-                "delay": row.delay,
-                "elapsed": row.elapsed,
-            }
-            for row in self.rows
-        ]
-        best = pick_best_sample_by_delay(samples)
-        drift_rate = estimate_drift_rate(samples)
-        elapsed_now = self.rows[-1].elapsed
-        return float(best["offset"] + (drift_rate * elapsed_now))
+        offsets = [row.offset for row in self.rows]
+        return float(statistics.mean(offsets))
 
     def _apply_post_sync_correction(self) -> None:
         if not self.rows:
             return
 
         corrected_offset = self._compute_corrected_offset()
-        best_delay = min(row.delay for row in self.rows)
+        mean_delay = statistics.mean(row.delay for row in self.rows)
         latest_source = self.rows[-1].time_source
 
         self.live_offset_seconds = corrected_offset
         self.live_synced = True
         self.server_source_var.set(latest_source)
         self.live_time_status_var.set(
-            f"Auto-corrected from {len(self.rows)} rounds (delay {best_delay:.4f}s, offset {corrected_offset:.4f}s, source {latest_source})"
+            f"Auto-corrected from {len(self.rows)} rounds (mean delay {mean_delay:.4f}s, mean offset {corrected_offset:.4f}s, source {latest_source})"
         )
 
     def _set_running_ui(self, running: bool) -> None:
@@ -468,7 +496,7 @@ class ClientSyncGUI(tk.Tk):
         try:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             with open(output_path, "w", newline="", encoding="utf-8") as csv_file:
-                csv_file.write("round,offset,delay,elapsed,reference_time\n")
+                csv_file.write("round,offset,delay,elapsed,reference_time,time_source\n")
         except OSError as exc:
             messagebox.showerror("Output error", f"Unable to prepare output CSV: {exc}")
             return
@@ -608,6 +636,7 @@ class ClientSyncGUI(tk.Tk):
                         f"{row.delay:.6f}",
                         f"{row.elapsed:.3f}",
                         f"{row.server_time:.6f}",
+                        row.time_source,
                     ]
                 )
         except OSError as exc:

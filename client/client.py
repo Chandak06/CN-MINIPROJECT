@@ -3,6 +3,7 @@ import csv
 import os
 import socket
 import ssl
+import statistics
 import sys
 import time
 from typing import Dict, List
@@ -22,7 +23,6 @@ from utils.packet_format import (
     encode_packet,
     validate_reply,
 )
-from utils.statistics_tools import estimate_drift_rate, pick_best_sample_by_delay
 
 
 DEFAULT_HOST = os.getenv("CLOCKSYNC_SERVER_IP", "127.0.0.1")
@@ -50,10 +50,11 @@ def _format_timestamp(ts: float) -> str:
 
 
 def _compute_corrected_offset(samples: List[Dict[str, float]]) -> float:
-    best = pick_best_sample_by_delay(samples)
-    drift_rate = estimate_drift_rate(samples)
-    elapsed_now = samples[-1]["elapsed"]
-    return best["offset"] + (drift_rate * elapsed_now)
+    """Compute corrected offset using mean offset from all samples."""
+    if not samples:
+        return 0.0
+    offsets = [sample["offset"] for sample in samples]
+    return statistics.mean(offsets)
 
 
 def save_results(path: str, rows: List[Dict[str, float]]) -> None:
@@ -115,8 +116,13 @@ def print_summary(samples: List[Dict[str, float]]) -> None:
         print("No successful synchronization samples were collected.")
         return
 
-    best = pick_best_sample_by_delay(samples)
-    drift_rate = estimate_drift_rate(samples)
+    offsets = [sample["offset"] for sample in samples]
+    delays = [sample["delay"] for sample in samples]
+    mean_offset = statistics.mean(offsets)
+    mean_delay = statistics.mean(delays)
+    min_delay = min(delays)
+    max_delay = max(delays)
+    
     corrected_offset = _compute_corrected_offset(samples)
 
     raw_local_time = time.time()
@@ -132,10 +138,10 @@ def print_summary(samples: List[Dict[str, float]]) -> None:
 
     print("\n--- Synchronization Summary ---")
     print(f"Samples collected: {len(samples)}")
-    print(f"Best sample delay: {best['delay']:.6f}s")
-    print(f"Best sample offset: {best['offset']:.6f}s")
-    print(f"Estimated drift rate: {drift_rate:.9f} sec/sec")
-    print(f"Corrected offset used: {corrected_offset:.6f}s")
+    print(f"Mean offset: {mean_offset:.6f}s")
+    print(f"Offset range: {min(offsets):.6f}s to {max(offsets):.6f}s")
+    print(f"Mean delay: {mean_delay:.6f}s")
+    print(f"Delay range: {min_delay:.6f}s to {max_delay:.6f}s")
     print(f"Server time source: {source}")
     print(f"Error before correction: {baseline_error:.6f}s")
     print(f"Error after correction: {corrected_error:.6f}s")
