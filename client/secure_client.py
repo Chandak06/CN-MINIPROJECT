@@ -14,8 +14,6 @@ NUM_SYNCS = 10
 REQUEST_INTERVAL_SECONDS = 1
 SOCKET_TIMEOUT_SECONDS = 5
 
-simulated_drift = 0.5
-
 CERT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../security/cert.pem")
 
 
@@ -85,12 +83,12 @@ def run_client_session(client_id):
             try:
                 secure_socket.connect((host, port))
 
-                t1 = time.time() + simulated_drift
+                t1 = time.time()
                 request = {"type": "TIME_REQUEST", "id": request_id, "T1": t1}
                 secure_socket.sendall(json.dumps(request).encode())
 
                 data = secure_socket.recv(BUFFER_SIZE)
-                t4 = time.time() + simulated_drift
+                t4 = time.time()
             finally:
                 secure_socket.close()
 

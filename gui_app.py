@@ -15,10 +15,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-
-
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -31,9 +27,9 @@ class ManagedProcess:
 class ClockSyncGUI(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Distributed Clock Sync Control Center")
-        self.geometry("1320x860")
-        self.minsize(1080, 720)
+        self.title("Distributed Clock Sync Server")
+        self.geometry("1000x700")
+        self.minsize(900, 600)
 
         self.processes: dict[str, ManagedProcess] = {}
         self.log_queue: queue.Queue[str] = queue.Queue()
@@ -88,10 +84,10 @@ class ClockSyncGUI(tk.Tk):
         header = ttk.Frame(root)
         header.pack(fill="x")
 
-        ttk.Label(header, text="Distributed Clock Sync Control Center", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(header, text="Distributed Clock Sync Server", style="Header.TLabel").pack(anchor="w")
         ttk.Label(
             header,
-            text="Manage UDP/TLS servers, run synchronized clients, and analyze delay-offset behavior from one interface.",
+            text="Manage UDP/TLS servers and monitor server time synchronization.",
             style="Muted.TLabel",
         ).pack(anchor="w", pady=(2, 8))
 
@@ -100,21 +96,15 @@ class ClockSyncGUI(tk.Tk):
 
         self.dashboard_tab = ttk.Frame(notebook)
         self.server_tab = ttk.Frame(notebook)
-        self.client_tab = ttk.Frame(notebook)
         self.live_time_tab = ttk.Frame(notebook)
-        self.analysis_tab = ttk.Frame(notebook)
 
         notebook.add(self.dashboard_tab, text="Dashboard")
         notebook.add(self.server_tab, text="Server Control")
-        notebook.add(self.client_tab, text="Client Sync")
         notebook.add(self.live_time_tab, text="Live Time")
-        notebook.add(self.analysis_tab, text="Analysis")
 
         self._build_dashboard_tab()
         self._build_server_tab()
-        self._build_client_tab()
         self._build_live_time_tab()
-        self._build_analysis_tab()
 
         self.after(120, self._tick_live_time)
 
@@ -127,15 +117,12 @@ class ClockSyncGUI(tk.Tk):
 
         self.udp_status_var = tk.StringVar(value="UDP Server: Stopped")
         self.tls_status_var = tk.StringVar(value="TLS Server: Stopped")
-        self.client_status_var = tk.StringVar(value="Client Job: Idle")
 
         self.udp_status_label = ttk.Label(status_row, textvariable=self.udp_status_var, style="StatusRed.TLabel")
         self.tls_status_label = ttk.Label(status_row, textvariable=self.tls_status_var, style="StatusRed.TLabel")
-        self.client_status_label = ttk.Label(status_row, textvariable=self.client_status_var, style="StatusRed.TLabel")
 
         self.udp_status_label.grid(row=0, column=0, sticky="w", padx=(0, 18), pady=(0, 8))
-        self.tls_status_label.grid(row=0, column=1, sticky="w", padx=(0, 18), pady=(0, 8))
-        self.client_status_label.grid(row=0, column=2, sticky="w", pady=(0, 8))
+        self.tls_status_label.grid(row=0, column=1, sticky="w", padx=(0, 8), pady=(0, 8))
 
         quick_actions = ttk.Frame(frame, style="Panel.TFrame")
         quick_actions.pack(fill="x", pady=(4, 10))
@@ -145,11 +132,7 @@ class ClockSyncGUI(tk.Tk):
         ttk.Button(quick_actions, text="Start TLS", style="Primary.TButton", command=self.start_tls_server).pack(
             side="left", padx=(0, 8)
         )
-        ttk.Button(quick_actions, text="Stop TLS", command=self.stop_tls_server).pack(side="left", padx=(0, 20))
-        ttk.Button(quick_actions, text="Run Client Sync", style="Primary.TButton", command=self.run_client).pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Button(quick_actions, text="Stop All", command=self.stop_all_processes).pack(side="left")
+        ttk.Button(quick_actions, text="Stop TLS", command=self.stop_tls_server).pack(side="left")
 
         ttk.Label(frame, text="Live Logs", style="PanelLabel.TLabel").pack(anchor="w", pady=(4, 4))
         self._build_log_box(frame, panel_style="Panel.TFrame")
@@ -199,86 +182,6 @@ class ClockSyncGUI(tk.Tk):
         ttk.Separator(outer).pack(fill="x", pady=14)
         ttk.Label(outer, text="Server and Process Logs", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 4))
         self._build_log_box(outer, panel_style="Panel.TFrame")
-
-    def _build_client_tab(self) -> None:
-        outer = ttk.Frame(self.client_tab, style="Panel.TFrame", padding=14)
-        outer.pack(fill="both", expand=True, padx=10, pady=10)
-
-        client_group = ttk.LabelFrame(outer, text="Secure Client Configuration", padding=12)
-        client_group.pack(fill="x")
-
-        self.client_host_var = tk.StringVar(value="127.0.0.1")
-        self.client_port_var = tk.StringVar(value="6000")
-        self.client_server_hostname_var = tk.StringVar(value="127.0.0.1")
-        self.client_rounds_var = tk.StringVar(value="10")
-        self.client_output_var = tk.StringVar(value=os.path.join(PROJECT_ROOT, "results", "sync_data.csv"))
-
-        self._build_labeled_entry(client_group, "Server Host", self.client_host_var, 0)
-        self._build_labeled_entry(client_group, "Server Port", self.client_port_var, 1)
-        self._build_labeled_entry(client_group, "TLS Hostname", self.client_server_hostname_var, 2)
-        self._build_labeled_entry(client_group, "Rounds", self.client_rounds_var, 3)
-        self._build_labeled_entry(client_group, "Output CSV", self.client_output_var, 4)
-
-        row = ttk.Frame(client_group)
-        row.grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        ttk.Button(row, text="Choose Output", command=self._choose_output_path).pack(side="left", padx=(0, 8))
-        ttk.Button(row, text="Run Client Sync", style="Primary.TButton", command=self.run_client).pack(side="left", padx=(0, 8))
-        ttk.Button(row, text="Stop Client", command=self.stop_client).pack(side="left")
-
-        ttk.Separator(outer).pack(fill="x", pady=14)
-        ttk.Label(outer, text="Client Run Logs", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 4))
-        self._build_log_box(outer, panel_style="Panel.TFrame")
-
-    def _build_analysis_tab(self) -> None:
-        outer = ttk.Frame(self.analysis_tab, style="Panel.TFrame", padding=14)
-        outer.pack(fill="both", expand=True, padx=10, pady=10)
-
-        top = ttk.LabelFrame(outer, text="Analysis Configuration", padding=12)
-        top.pack(fill="x")
-
-        self.analysis_input_var = tk.StringVar(value=os.path.join(PROJECT_ROOT, "results", "sync_data.csv"))
-        self.analysis_output_var = tk.StringVar(value=os.path.join(PROJECT_ROOT, "results", "sync_plot.png"))
-
-        self._build_labeled_entry(top, "Input CSV", self.analysis_input_var, 0)
-        self._build_labeled_entry(top, "Output Plot (optional)", self.analysis_output_var, 1)
-
-        actions = ttk.Frame(top)
-        actions.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        ttk.Button(actions, text="Choose CSV", command=self._choose_input_csv).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Load CSV", command=self.load_csv_table_and_plot).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Run Drift Estimator", command=self.run_drift_analysis).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Run Accuracy Eval", command=self.run_accuracy_analysis).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Generate Plot File", style="Primary.TButton", command=self.run_plot_script).pack(side="left")
-
-        middle = ttk.Frame(outer, style="Panel.TFrame")
-        middle.pack(fill="both", expand=True, pady=(12, 0))
-        middle.columnconfigure(0, weight=1)
-        middle.columnconfigure(1, weight=1)
-        middle.rowconfigure(0, weight=1)
-
-        table_panel = ttk.Frame(middle, style="AltPanel.TFrame", padding=10)
-        plot_panel = ttk.Frame(middle, style="AltPanel.TFrame", padding=10)
-        table_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        plot_panel.grid(row=0, column=1, sticky="nsew")
-
-        ttk.Label(table_panel, text="Latest Samples", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 6))
-        self.tree = ttk.Treeview(table_panel, columns=("round", "offset", "delay", "elapsed"), show="headings", height=15)
-        for col, width in (("round", 80), ("offset", 130), ("delay", 130), ("elapsed", 130)):
-            self.tree.heading(col, text=col.capitalize())
-            self.tree.column(col, width=width, anchor="center")
-
-        table_scroll = ttk.Scrollbar(table_panel, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=table_scroll.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        table_scroll.pack(side="right", fill="y")
-
-        ttk.Label(plot_panel, text="Offset and Delay Trend", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 6))
-        self.figure = Figure(figsize=(5.6, 4.2), dpi=100)
-        self.ax_offset = self.figure.add_subplot(211)
-        self.ax_delay = self.figure.add_subplot(212)
-        self.figure.tight_layout(pad=1.8)
-        self.canvas = FigureCanvasTkAgg(self.figure, master=plot_panel)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
     def _build_live_time_tab(self) -> None:
         outer = ttk.Frame(self.live_time_tab, style="Panel.TFrame", padding=14)
@@ -468,10 +371,6 @@ class ClockSyncGUI(tk.Tk):
         code = proc.wait()
         self._append_log(f"[{managed.name}] Exited with code {code}")
 
-        if key == "client_run":
-            # Switch analysis to the CSV produced by the latest client run.
-            self.after(0, self._on_client_run_finished, code)
-
         if not persistent:
             self.processes.pop(key, None)
         self._refresh_status_labels()
@@ -525,15 +424,12 @@ class ClockSyncGUI(tk.Tk):
     def _refresh_status_labels(self) -> None:
         udp_running = self._is_running("udp_server")
         tls_running = self._is_running("tls_server")
-        client_running = self._is_running("client_run")
 
         self.udp_status_var.set("UDP Server: Running" if udp_running else "UDP Server: Stopped")
         self.tls_status_var.set("TLS Server: Running" if tls_running else "TLS Server: Stopped")
-        self.client_status_var.set("Client Job: Running" if client_running else "Client Job: Idle")
 
         self.udp_status_label.configure(style="StatusGreen.TLabel" if udp_running else "StatusRed.TLabel")
         self.tls_status_label.configure(style="StatusGreen.TLabel" if tls_running else "StatusRed.TLabel")
-        self.client_status_label.configure(style="StatusGreen.TLabel" if client_running else "StatusRed.TLabel")
 
     def _is_running(self, key: str) -> bool:
         managed = self.processes.get(key)
@@ -611,193 +507,6 @@ class ClockSyncGUI(tk.Tk):
 
     def stop_tls_server(self) -> None:
         self._stop_process("tls_server")
-
-    def run_client(self) -> None:
-        port = self._validate_port(self.client_port_var.get(), "6000")
-        if port is None:
-            return
-
-        port_num = int(port)
-        client_host = self.client_host_var.get().strip() or "127.0.0.1"
-        client_server_hostname = self.client_server_hostname_var.get().strip() or client_host
-
-        if not self._wait_for_tcp_port(client_host, port_num, timeout_seconds=2.0):
-            messagebox.showerror(
-                "Server unavailable",
-                f"No server is reachable at {client_host}:{port_num}. Start secure_server.py first.",
-            )
-            self._append_log(f"[Launcher] Client start blocked: server unreachable at {client_host}:{port_num}")
-            return
-
-        rounds_raw = self.client_rounds_var.get().strip() or "10"
-        try:
-            rounds = str(max(1, int(rounds_raw)))
-        except ValueError:
-            messagebox.showerror("Invalid rounds", f"Rounds must be a positive integer (got: {rounds_raw!r}).")
-            return
-
-        output_path = self.client_output_var.get().strip() or os.path.join("results", "sync_data.csv")
-        if not output_path.endswith(".csv"):
-            messagebox.showerror("Invalid output path", "Output path must end with .csv")
-            return
-
-        # Start with a fresh CSV so analysis reflects only this run.
-        output_abs_path = self._resolve_project_path(output_path, os.path.join("results", "sync_data.csv"))
-        try:
-            os.makedirs(os.path.dirname(output_abs_path), exist_ok=True)
-            with open(output_abs_path, "w", newline="", encoding="utf-8") as csv_file:
-                csv_file.write("round,offset,delay,elapsed,reference_time\n")
-        except OSError as exc:
-            messagebox.showerror("Output error", f"Unable to prepare output CSV: {exc}")
-            return
-
-        # Keep analysis tab pinned to the same file used by the active client run.
-        self.analysis_input_var.set(output_abs_path)
-
-        args = [
-            os.path.join("client", "client.py"),
-            "--host",
-            client_host,
-            "--port",
-            port,
-            "--server-hostname",
-            client_server_hostname,
-            "--rounds",
-            rounds,
-            "--output",
-            output_abs_path,
-        ]
-        self._run_subprocess("client_run", "Client", args=args, persistent=False)
-
-    def stop_client(self) -> None:
-        self._stop_process("client_run")
-
-    def run_drift_analysis(self) -> None:
-        input_path = self._resolve_project_path(
-            self.analysis_input_var.get().strip(),
-            os.path.join("results", "sync_data.csv"),
-        )
-        self.analysis_input_var.set(input_path)
-        self._run_subprocess(
-            key="drift_analysis",
-            name="Drift Estimator",
-            args=[os.path.join("analysis", "drift_estimator.py"), "--input", input_path],
-            persistent=False,
-        )
-
-    def run_accuracy_analysis(self) -> None:
-        input_path = self._resolve_project_path(
-            self.analysis_input_var.get().strip(),
-            os.path.join("results", "sync_data.csv"),
-        )
-        self.analysis_input_var.set(input_path)
-        self._run_subprocess(
-            key="accuracy_analysis",
-            name="Accuracy Evaluator",
-            args=[os.path.join("analysis", "accuracy_evaluator.py"), "--input", input_path],
-            persistent=False,
-        )
-
-    def run_plot_script(self) -> None:
-        input_path = self._resolve_project_path(
-            self.analysis_input_var.get().strip(),
-            os.path.join("results", "sync_data.csv"),
-        )
-        self.analysis_input_var.set(input_path)
-        args = [os.path.join("analysis", "plot_results.py"), "--input", input_path]
-        output_path = self.analysis_output_var.get().strip()
-        if output_path:
-            output_abs_path = self._resolve_project_path(output_path, os.path.join("results", "sync_plot.png"))
-            self.analysis_output_var.set(output_abs_path)
-            args += ["--output", output_abs_path]
-        self._run_subprocess(key="plot_analysis", name="Plot Generator", args=args, persistent=False)
-
-    def load_csv_table_and_plot(self) -> None:
-        if getattr(self, "_csv_loading", False):
-            return
-        self._csv_loading = True
-        try:
-            self._do_load_csv_table_and_plot()
-        finally:
-            self._csv_loading = False
-
-    def _do_load_csv_table_and_plot(self) -> None:
-        csv_path = self._resolve_project_path(
-            self.analysis_input_var.get().strip(),
-            os.path.join("results", "sync_data.csv"),
-        )
-        self.analysis_input_var.set(csv_path)
-        if not csv_path or not os.path.exists(csv_path):
-            messagebox.showerror("Missing file", "Input CSV file was not found.")
-            return
-
-        rounds: list[float] = []
-        offsets: list[float] = []
-        delays: list[float] = []
-
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-
-        with open(csv_path, "r", newline="", encoding="utf-8") as csv_file:
-            reader = csv.DictReader(csv_file)
-            for row in reader:
-                try:
-                    round_val = float(row.get("round", 0))
-                    offset_val = float(row.get("offset", 0))
-                    delay_val = float(row.get("delay", 0))
-                    elapsed_val = float(row.get("elapsed", 0))
-                except ValueError:
-                    continue
-
-                rounds.append(round_val)
-                offsets.append(offset_val)
-                delays.append(delay_val)
-                self.tree.insert(
-                    "",
-                    "end",
-                    values=(f"{round_val:.0f}", f"{offset_val:.6f}", f"{delay_val:.6f}", f"{elapsed_val:.3f}"),
-                )
-
-        self.ax_offset.clear()
-        self.ax_delay.clear()
-
-        if rounds:
-            self.ax_offset.plot(rounds, offsets, marker="o", color="#22D3EE")
-            self.ax_offset.set_title("Offset Trend")
-            self.ax_offset.set_ylabel("Offset (s)")
-            self.ax_offset.grid(alpha=0.3)
-
-            self.ax_delay.plot(rounds, delays, marker="s", color="#F97316")
-            self.ax_delay.set_title("Delay Trend")
-            self.ax_delay.set_xlabel("Round")
-            self.ax_delay.set_ylabel("Delay (s)")
-            self.ax_delay.grid(alpha=0.3)
-            self._append_log(f"[Analysis] Loaded {len(rounds)} samples from {csv_path}")
-        else:
-            self.ax_offset.text(0.5, 0.5, "No valid rows", ha="center", va="center")
-            self.ax_delay.text(0.5, 0.5, "No valid rows", ha="center", va="center")
-
-        self.figure.tight_layout(pad=1.8)
-        self.canvas.draw_idle()
-
-    def _choose_input_csv(self) -> None:
-        selected = filedialog.askopenfilename(
-            title="Select sync_data.csv",
-            initialdir=os.path.join(PROJECT_ROOT, "results"),
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-        )
-        if selected:
-            self.analysis_input_var.set(selected)
-
-    def _choose_output_path(self) -> None:
-        selected = filedialog.asksaveasfilename(
-            title="Select output CSV",
-            defaultextension=".csv",
-            initialdir=os.path.join(PROJECT_ROOT, "results"),
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-        )
-        if selected:
-            self.client_output_var.set(selected)
 
     def stop_all_processes(self) -> None:
         for key in list(self.processes.keys()):
