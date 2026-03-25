@@ -375,6 +375,25 @@ class ClientSyncGUI(tk.Tk):
             return
 
         protocol = self.protocol_var.get()
+
+        if protocol == "TLS/TCP" and port == 5005:
+            messagebox.showerror(
+                "Protocol mismatch",
+                "TLS/TCP mode selected with UDP default port 5005.\n"
+                "Use secure_server.py on port 6000 or change mode to UDP.",
+            )
+            self.live_time_status_var.set("Protocol mismatch")
+            return
+
+        if protocol == "UDP" and port == 6000:
+            messagebox.showerror(
+                "Protocol mismatch",
+                "UDP mode selected with TLS default port 6000.\n"
+                "Use server.py on port 5005 or change mode to TLS/TCP.",
+            )
+            self.live_time_status_var.set("Protocol mismatch")
+            return
+
         if protocol == "TLS/TCP" and not os.path.exists(CERT_FILE):
             messagebox.showerror("Missing certificate", "security/cert.pem not found. Run generate_cert.py first.")
             return
@@ -423,13 +442,22 @@ class ClientSyncGUI(tk.Tk):
         self.live_time_status_var.set("Using local clock")
 
     def _is_server_reachable(self, host: str, port: int, protocol: str, timeout_seconds: float = 2.0) -> bool:
-        if protocol == "UDP":
-            return True
         try:
-            with socket.create_connection((host, port), timeout=timeout_seconds):
-                return True
-        except OSError:
+            self._probe_server_protocol(host=host, port=port, protocol=protocol, server_hostname=self.hostname_var.get().strip() or host)
+            return True
+        except Exception:
             return False
+
+    def _probe_server_protocol(self, host: str, port: int, protocol: str, server_hostname: str) -> None:
+        """Run a small protocol-specific probe to ensure the selected transport is actually available."""
+        probe_id = int(time.time() * 1000) % 1_000_000
+        self._request_time_sample(
+            host=host,
+            port=port,
+            server_hostname=server_hostname,
+            protocol=protocol,
+            request_id=probe_id,
+        )
 
     def _request_time_sample(
         self,
@@ -520,13 +548,36 @@ class ClientSyncGUI(tk.Tk):
             return
 
         protocol = self.protocol_var.get()
+
+        if protocol == "TLS/TCP" and port == 5005:
+            messagebox.showerror(
+                "Protocol mismatch",
+                "Port 5005 is usually the UDP server port.\n"
+                "For TLS/TCP mode, use secure_server.py (default 6000).",
+            )
+            self.status_var.set("Protocol mismatch")
+            return
+
+        if protocol == "UDP" and port == 6000:
+            messagebox.showerror(
+                "Protocol mismatch",
+                "Port 6000 is usually the TLS/TCP server port.\n"
+                "For UDP mode, use server.py (default 5005).",
+            )
+            self.status_var.set("Protocol mismatch")
+            return
+
         if protocol == "TLS/TCP" and not os.path.exists(CERT_FILE):
             messagebox.showerror("Missing certificate", "security/cert.pem not found. Run generate_cert.py first.")
             return
 
         if not self._is_server_reachable(host, port, protocol=protocol):
             server_hint = "secure_server.py" if protocol == "TLS/TCP" else "server.py"
-            messagebox.showerror("Server unavailable", f"No server is reachable at {host}:{port}. Start {server_hint} first.")
+            messagebox.showerror(
+                "Server unavailable",
+                f"No {protocol} server is responding at {host}:{port}.\n\n"
+                f"Start {server_hint} for this protocol or switch protocol/port.",
+            )
             self.status_var.set("Server unavailable")
             return
 
