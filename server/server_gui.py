@@ -529,7 +529,19 @@ class ClockSyncGUI(tk.Tk):
 
     def _stop_process(self, key: str) -> None:
         managed = self.processes.get(key)
+        if key == "udp_server":
+            port = self._parse_positive_int(self.udp_port_var.get().strip(), 5005)
+            proto = "udp"
+        else:
+            port = self._parse_positive_int(self.tls_port_var.get().strip(), 6000)
+            proto = "tcp"
+
         if not managed:
+            # Still try to stop external listeners (e.g., servers started from another terminal).
+            stopped = self._stop_external_listeners(port=port, proto=proto)
+            if stopped:
+                self._append_log(f"[Launcher] Stopped external listeners on {proto.upper()} port {port}.")
+            self._refresh_status_labels()
             return
 
         proc = managed.process
@@ -553,7 +565,61 @@ class ClockSyncGUI(tk.Tk):
 
         self._append_log(f"[Launcher] {managed.name} stopped.")
         self.processes.pop(key, None)
+        # Ensure no stale external process is still bound to the expected port.
+        self._stop_external_listeners(port=port, proto=proto)
         self._refresh_status_labels()
+
+    def _find_listening_pids(self, port: int, proto: str) -> list[int]:
+        """Find listener PIDs for a port using netstat on Windows."""
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", proto],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return []
+
+        pids: set[int] = set()
+        needle = f":{port}"
+        for raw_line in result.stdout.splitlines():
+            line = raw_line.strip()
+            if needle not in line:
+                continue
+
+            parts = line.split()
+            if proto == "tcp":
+                # Expected: TCP local_addr foreign_addr LISTENING pid
+                if len(parts) < 5 or parts[0].upper() != "TCP" or parts[3].upper() != "LISTENING":
+                    continue
+                pid_str = parts[4]
+            else:
+                # Expected: UDP local_addr foreign_addr pid
+                if len(parts) < 4 or parts[0].upper() != "UDP":
+                    continue
+                pid_str = parts[3]
+
+            try:
+                pid = int(pid_str)
+            except ValueError:
+                continue
+
+            if pid > 0 and pid != os.getpid():
+                pids.add(pid)
+
+        return sorted(pids)
+
+    def _stop_external_listeners(self, port: int, proto: str) -> bool:
+        """Force-stop processes listening on a specific port."""
+        stopped_any = False
+        for pid in self._find_listening_pids(port=port, proto=proto):
+            try:
+                subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True, check=False)
+                stopped_any = True
+            except OSError:
+                continue
+        return stopped_any
 
     def _refresh_status_labels(self) -> None:
         udp_running = self._is_running("udp_server")
@@ -929,6 +995,14 @@ class ClockSyncGUI(tk.Tk):
         }
 
     def start_udp_server(self) -> None:
+        desired_port = self._parse_positive_int(self.udp_port_var.get().strip(), 5005)
+        if self._find_listening_pids(port=desired_port, proto="udp"):
+            messagebox.showwarning(
+                "UDP port busy",
+                f"UDP port {desired_port} is already in use. Stop the existing UDP server first.",
+            )
+            return
+
         port = self._validate_port(self.udp_port_var.get(), "5005")
         if port is None:
             return
@@ -952,6 +1026,14 @@ class ClockSyncGUI(tk.Tk):
         self._stop_process("udp_server")
 
     def start_tls_server(self) -> None:
+        desired_port = self._parse_positive_int(self.tls_port_var.get().strip(), 6000)
+        if self._find_listening_pids(port=desired_port, proto="tcp"):
+            messagebox.showwarning(
+                "TLS port busy",
+                f"TCP port {desired_port} is already in use. Stop the existing TLS server first.",
+            )
+            return
+
         if not os.path.exists(CERT_FILE) or not os.path.exists(KEY_FILE):
             messagebox.showerror("Missing certificate", "TLS certificate/key not found. Run generate_cert.py first.")
             return
