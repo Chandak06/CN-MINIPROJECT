@@ -64,6 +64,7 @@ class ClientSyncGUI(tk.Tk):
 
         self.host_var = tk.StringVar(value=DEFAULT_HOST)
         self.port_var = tk.StringVar(value=str(DEFAULT_PORT))
+        self.protocol_var = tk.StringVar(value="TLS/TCP")
         self.hostname_var = tk.StringVar(value=DEFAULT_HOST)
         self.rounds_var = tk.StringVar(value=str(DEFAULT_ROUNDS))
         self.interval_var = tk.StringVar(value=str(DEFAULT_INTERVAL_SECONDS))
@@ -84,8 +85,16 @@ class ClientSyncGUI(tk.Tk):
 
         self._configure_style()
         self._build_ui()
+        self.protocol_var.trace_add("write", self._on_protocol_changed)
         self.after(120, self._tick_live_time)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_protocol_changed(self, *_args: object) -> None:
+        protocol = self.protocol_var.get()
+        if protocol == "UDP" and self.port_var.get().strip() == "6000":
+            self.port_var.set("5005")
+        elif protocol == "TLS/TCP" and self.port_var.get().strip() == "5005":
+            self.port_var.set("6000")
 
     def _configure_style(self) -> None:
         style = ttk.Style(self)
@@ -158,15 +167,16 @@ class ClientSyncGUI(tk.Tk):
         cfg = ttk.LabelFrame(outer, text="Connection and Sync Settings", padding=12)
         cfg.pack(fill="x")
 
-        self._build_labeled_entry(cfg, "Server Host", self.host_var, 0)
-        self._build_labeled_entry(cfg, "Server Port", self.port_var, 1)
-        self._build_labeled_entry(cfg, "TLS Hostname", self.hostname_var, 2)
-        self._build_labeled_entry(cfg, "Rounds", self.rounds_var, 3)
-        self._build_labeled_entry(cfg, "Interval Between Rounds (s)", self.interval_var, 4)
-        self._build_labeled_entry(cfg, "Output CSV", self.output_var, 5)
+        self._build_labeled_entry(cfg, "Protocol", self.protocol_var, 0, options=["TLS/TCP", "UDP"])
+        self._build_labeled_entry(cfg, "Server Host", self.host_var, 1)
+        self._build_labeled_entry(cfg, "Server Port", self.port_var, 2)
+        self._build_labeled_entry(cfg, "TLS Hostname", self.hostname_var, 3)
+        self._build_labeled_entry(cfg, "Rounds", self.rounds_var, 4)
+        self._build_labeled_entry(cfg, "Interval Between Rounds (s)", self.interval_var, 5)
+        self._build_labeled_entry(cfg, "Output CSV", self.output_var, 6)
 
         actions = ttk.Frame(cfg)
-        actions.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        actions.grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Button(actions, text="Choose Output", command=self._choose_output_path).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Start Sync", style="Primary.TButton", command=self.start_sync).pack(side="left", padx=(0, 8))
         self.stop_btn = ttk.Button(actions, text="Stop", command=self.stop_sync, state="disabled")
@@ -221,12 +231,13 @@ class ClientSyncGUI(tk.Tk):
         cfg = ttk.LabelFrame(outer, text="Server Time Source", padding=12)
         cfg.pack(fill="x")
 
-        self._build_labeled_entry(cfg, "Server Host", self.host_var, 0)
-        self._build_labeled_entry(cfg, "Server Port", self.port_var, 1)
-        self._build_labeled_entry(cfg, "TLS Hostname", self.hostname_var, 2)
+        self._build_labeled_entry(cfg, "Protocol", self.protocol_var, 0, options=["TLS/TCP", "UDP"])
+        self._build_labeled_entry(cfg, "Server Host", self.host_var, 1)
+        self._build_labeled_entry(cfg, "Server Port", self.port_var, 2)
+        self._build_labeled_entry(cfg, "TLS Hostname", self.hostname_var, 3)
 
         actions = ttk.Frame(cfg)
-        actions.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        actions.grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ttk.Button(actions, text="Sync From Server", style="Primary.TButton", command=self.sync_live_time).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Use Local Clock", command=self.reset_live_time_to_local).pack(side="left")
 
@@ -250,9 +261,21 @@ class ClientSyncGUI(tk.Tk):
         ttk.Label(status_panel, text="Status", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
         ttk.Label(status_panel, textvariable=self.live_time_status_var, style="PanelLabel.TLabel").grid(row=0, column=1, sticky="w")
 
-    def _build_labeled_entry(self, parent: ttk.Widget, label: str, var: tk.StringVar, row: int) -> None:
+    def _build_labeled_entry(
+        self,
+        parent: ttk.Widget,
+        label: str,
+        var: tk.StringVar,
+        row: int,
+        options: list[str] | None = None,
+    ) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
-        ttk.Entry(parent, textvariable=var, width=48).grid(row=row, column=1, sticky="ew", pady=6)
+        if options:
+            ttk.Combobox(parent, textvariable=var, values=options, state="readonly", width=45).grid(
+                row=row, column=1, sticky="ew", pady=6
+            )
+        else:
+            ttk.Entry(parent, textvariable=var, width=48).grid(row=row, column=1, sticky="ew", pady=6)
         parent.columnconfigure(1, weight=1)
 
     def _build_analysis_tab(self) -> None:
@@ -351,31 +374,30 @@ class ClientSyncGUI(tk.Tk):
             messagebox.showerror("Invalid input", "Please enter valid host/port values.")
             return
 
+        protocol = self.protocol_var.get()
+        if protocol == "TLS/TCP" and not os.path.exists(CERT_FILE):
+            messagebox.showerror("Missing certificate", "security/cert.pem not found. Run generate_cert.py first.")
+            return
+
         self.live_time_status_var.set("Syncing from server...")
         worker = threading.Thread(
             target=self._sync_live_time_worker,
-            args=(host, port, server_hostname),
+            args=(host, port, server_hostname, protocol),
             daemon=True,
         )
         worker.start()
 
-    def _sync_live_time_worker(self, host: str, port: int, server_hostname: str) -> None:
+    def _sync_live_time_worker(self, host: str, port: int, server_hostname: str, protocol: str) -> None:
         try:
-            context = ssl.create_default_context()
-            context.load_verify_locations(CERT_FILE)
+            request_id = int(time.time() * 1000) % 1_000_000
+            packet, t1, t4 = self._request_time_sample(
+                host=host,
+                port=port,
+                server_hostname=server_hostname,
+                protocol=protocol,
+                request_id=request_id,
+            )
 
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_socket:
-                raw_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
-                with context.wrap_socket(raw_socket, server_hostname=server_hostname) as secure_socket:
-                    secure_socket.connect((host, port))
-                    request_id = int(time.time() * 1000) % 1_000_000
-                    t1 = time.time()
-                    secure_socket.sendall(encode_packet(build_time_request(request_id=request_id, t1=t1)))
-                    response_data = secure_socket.recv(BUFFER_SIZE)
-                    t4 = time.time()
-
-            packet = decode_packet(response_data)
-            validate_reply(packet)
             if int(packet.get("id", -1)) != request_id:
                 raise ValueError("Response ID does not match request ID")
 
@@ -400,12 +422,47 @@ class ClientSyncGUI(tk.Tk):
         self.live_offset_seconds = 0.0
         self.live_time_status_var.set("Using local clock")
 
-    def _is_server_reachable(self, host: str, port: int, timeout_seconds: float = 2.0) -> bool:
+    def _is_server_reachable(self, host: str, port: int, protocol: str, timeout_seconds: float = 2.0) -> bool:
+        if protocol == "UDP":
+            return True
         try:
             with socket.create_connection((host, port), timeout=timeout_seconds):
                 return True
         except OSError:
             return False
+
+    def _request_time_sample(
+        self,
+        host: str,
+        port: int,
+        server_hostname: str,
+        protocol: str,
+        request_id: int,
+    ) -> tuple[dict[str, float], float, float]:
+        request = build_time_request(request_id=request_id, t1=time.time())
+        t1 = float(request["T1"])
+
+        if protocol == "UDP":
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
+                udp_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
+                udp_socket.sendto(encode_packet(request), (host, port))
+                response_data, _ = udp_socket.recvfrom(BUFFER_SIZE)
+                t4 = time.time()
+        else:
+            context = ssl.create_default_context()
+            context.load_verify_locations(CERT_FILE)
+
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_socket:
+                raw_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
+                with context.wrap_socket(raw_socket, server_hostname=server_hostname) as secure_socket:
+                    secure_socket.connect((host, port))
+                    secure_socket.sendall(encode_packet(request))
+                    response_data = secure_socket.recv(BUFFER_SIZE)
+                    t4 = time.time()
+
+        packet = decode_packet(response_data)
+        validate_reply(packet)
+        return packet, t1, t4
 
     def _choose_input_csv(self) -> None:
         selected = filedialog.askopenfilename(
@@ -428,6 +485,13 @@ class ClientSyncGUI(tk.Tk):
 
     def _friendly_sync_error(self, exc: Exception, host: str, port: int, server_hostname: str) -> str:
         if isinstance(exc, ConnectionRefusedError):
+            protocol = self.protocol_var.get()
+            if protocol == "UDP":
+                return (
+                    f"Connection failed for UDP target {host}:{port}.\n\n"
+                    "Start the UDP server first, for example:\n"
+                    f"python server/server.py --host 0.0.0.0 --port {port}"
+                )
             return f"Connection refused by {host}:{port}.\n\nStart the TLS server first, for example:\npython server/secure_server.py --host 0.0.0.0 --port {port}"
         if isinstance(exc, socket.timeout):
             return f"Connection to {host}:{port} timed out after {SOCKET_TIMEOUT_SECONDS} seconds.\n\nCheck server IP/port and firewall rules."
@@ -455,12 +519,14 @@ class ClientSyncGUI(tk.Tk):
             messagebox.showerror("Invalid input", "Please enter valid host/port/rounds/interval values.")
             return
 
-        if not os.path.exists(CERT_FILE):
+        protocol = self.protocol_var.get()
+        if protocol == "TLS/TCP" and not os.path.exists(CERT_FILE):
             messagebox.showerror("Missing certificate", "security/cert.pem not found. Run generate_cert.py first.")
             return
 
-        if not self._is_server_reachable(host, port):
-            messagebox.showerror("Server unavailable", f"No server is reachable at {host}:{port}. Start secure_server.py first.")
+        if not self._is_server_reachable(host, port, protocol=protocol):
+            server_hint = "secure_server.py" if protocol == "TLS/TCP" else "server.py"
+            messagebox.showerror("Server unavailable", f"No server is reachable at {host}:{port}. Start {server_hint} first.")
             self.status_var.set("Server unavailable")
             return
 
@@ -484,7 +550,7 @@ class ClientSyncGUI(tk.Tk):
         self.stop_btn.configure(state="normal")
         self.worker = threading.Thread(
             target=self._run_sync_session,
-            args=(host, port, server_hostname, rounds, interval_seconds),
+            args=(host, port, server_hostname, protocol, rounds, interval_seconds),
             daemon=True,
         )
         self.worker.start()
@@ -508,11 +574,10 @@ class ClientSyncGUI(tk.Tk):
         host: str,
         port: int,
         server_hostname: str,
+        protocol: str,
         rounds: int,
         interval_seconds: float,
     ) -> None:
-        context = ssl.create_default_context()
-        context.load_verify_locations(CERT_FILE)
         output_path = self._resolve_project_path(self.output_var.get().strip(), DEFAULT_OUTPUT_CSV)
         start_perf = time.perf_counter()
 
@@ -522,20 +587,13 @@ class ClientSyncGUI(tk.Tk):
                 break
 
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_socket:
-                    raw_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
-                    with context.wrap_socket(raw_socket, server_hostname=server_hostname) as secure_socket:
-                        secure_socket.connect((host, port))
-
-                        t1 = time.time()
-                        request = build_time_request(request_id=request_id, t1=t1)
-                        secure_socket.sendall(encode_packet(request))
-
-                        response_data = secure_socket.recv(BUFFER_SIZE)
-                        t4 = time.time()
-
-                packet = decode_packet(response_data)
-                validate_reply(packet)
+                packet, t1, t4 = self._request_time_sample(
+                    host=host,
+                    port=port,
+                    server_hostname=server_hostname,
+                    protocol=protocol,
+                    request_id=request_id,
+                )
 
                 if int(packet.get("id", -1)) != request_id:
                     raise ValueError("Response ID does not match request ID")
