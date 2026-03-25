@@ -9,7 +9,7 @@ A modular Python implementation of distributed clock synchronization using an NT
 ```
   ┌─────────────────────────────────────────────────────────────────┐
   │                        Master Clock Server                      │
-  │  NTP (pool.ntp.org) ──► time_manager.MasterClock               │
+  │  NTP (time.google.com) ──► time_manager.MasterClock            │
   │                              │                                  │
   │               ┌──────────────┼──────────────┐                  │
   │               ▼              ▼               ▼                  │

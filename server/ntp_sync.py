@@ -1,6 +1,10 @@
 import logging
 import socket
 import time
+import urllib.error
+import urllib.request
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from typing import Optional
 
 try:
@@ -18,6 +22,12 @@ DEFAULT_NTP_FALLBACKS = (
     "time.google.com",
     "time.cloudflare.com",
     "time.windows.com",
+)
+
+DEFAULT_HTTPS_TIME_SOURCES = (
+    "https://www.google.com",
+    "https://www.cloudflare.com",
+    "https://www.microsoft.com",
 )
 
 
@@ -47,37 +57,66 @@ def _should_emit_warning(key: str) -> bool:
     return False
 
 
-def fetch_ntp_time(ntp_server: str = "time.google.com", timeout: int = 2) -> Optional[float]:
-    if ntplib is None:
-        warning_key = "ntplib-missing"
-        if _should_emit_warning(warning_key):
-            LOGGER.warning("ntplib is not installed; using system time fallback.")
-        return None
+def _fetch_https_time(timeout: int) -> tuple[Optional[float], str, list[str]]:
+    errors: list[str] = []
+    for url in DEFAULT_HTTPS_TIME_SOURCES:
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                date_header = response.headers.get("Date", "").strip()
+                if not date_header:
+                    errors.append(f"{url}: missing Date header")
+                    continue
+                dt = parsedate_to_datetime(date_header)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)  # pragma: no cover
+                return dt.timestamp(), url, errors
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            errors.append(f"{url}: {exc}")
+    return None, "", errors
 
+
+def fetch_reference_time(ntp_server: str = "time.google.com", timeout: int = 2) -> tuple[Optional[float], str]:
+    """Return (reference_time, source_label)."""
     candidates = _candidate_servers(ntp_server)
     if not candidates:
-        return None
+        return None, "system-time (manual/system mode)"
 
-    client = ntplib.NTPClient()
-    errors: list[str] = []
-    ntp_exception = getattr(ntplib, "NTPException", None)
-    handled_exceptions: tuple[type[BaseException], ...]
-    if isinstance(ntp_exception, type) and issubclass(ntp_exception, BaseException):
-        handled_exceptions = (socket.timeout, TimeoutError, OSError, ntp_exception)
+    ntp_errors: list[str] = []
+    if ntplib is not None:
+        client = ntplib.NTPClient()
+        ntp_exception = getattr(ntplib, "NTPException", None)
+        handled_exceptions: tuple[type[BaseException], ...]
+        if isinstance(ntp_exception, type) and issubclass(ntp_exception, BaseException):
+            handled_exceptions = (socket.timeout, TimeoutError, OSError, ntp_exception)
+        else:
+            handled_exceptions = (socket.timeout, TimeoutError, OSError)
+
+        for server in candidates:
+            try:
+                response = client.request(server, version=3, timeout=timeout)
+                return response.tx_time, f"ntp:{server}"
+            except handled_exceptions as exc:
+                ntp_errors.append(f"{server}: {exc}")
     else:
-        handled_exceptions = (socket.timeout, TimeoutError, OSError)
+        ntp_errors.append("ntplib: not installed")
 
-    for server in candidates:
-        try:
-            response = client.request(server, version=3, timeout=timeout)
-            return response.tx_time
-        except handled_exceptions as exc:
-            errors.append(f"{server}: {exc}")
+    https_time, https_source, https_errors = _fetch_https_time(timeout=timeout)
+    if https_time is not None:
+        warning_key = " | ".join(ntp_errors)
+        if warning_key and _should_emit_warning(warning_key):
+            LOGGER.warning("NTP unavailable; using HTTPS Date fallback. NTP attempts: %s", warning_key)
+        return https_time, f"https-date:{https_source}"
 
-    warning_key = " | ".join(errors)
+    warning_key = " | ".join(ntp_errors + https_errors)
     if _should_emit_warning(warning_key):
-        LOGGER.warning("NTP unavailable; using system time. Attempts: %s", warning_key)
-    return None
+        LOGGER.warning("NTP/HTTPS time unavailable; using system time. Attempts: %s", warning_key)
+    return None, "system-time (ntp unavailable)"
+
+
+def fetch_ntp_time(ntp_server: str = "time.google.com", timeout: int = 2) -> Optional[float]:
+    reference_time, _ = fetch_reference_time(ntp_server=ntp_server, timeout=timeout)
+    return reference_time
 
 
 def compute_reference_offset(reference_time: float) -> float:

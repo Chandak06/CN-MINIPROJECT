@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Secure TLS time sync server")
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument("--ntp-server", default="pool.ntp.org")
+    parser.add_argument("--ntp-server", default="time.google.com")
     return parser.parse_args()
 
 
@@ -99,7 +99,10 @@ def main() -> None:
             try:
                 secure_conn = context.wrap_socket(client_socket, server_side=True)
             except (ssl.SSLError, OSError) as exc:
-                print(f"TLS handshake failed for {addr}: {exc}")
+                message = str(exc)
+                # Plain TCP health checks (without TLS handshake) can cause benign EOF here.
+                if "UNEXPECTED_EOF_WHILE_READING" not in message:
+                    print(f"TLS handshake failed for {addr}: {exc}")
                 client_socket.close()
                 continue
 

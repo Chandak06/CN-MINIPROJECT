@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @dataclass
@@ -156,11 +156,11 @@ class ClockSyncGUI(tk.Tk):
 
         self.udp_host_var = tk.StringVar(value="0.0.0.0")
         self.udp_port_var = tk.StringVar(value="5005")
-        self.udp_ntp_var = tk.StringVar(value="system")
+        self.udp_ntp_var = tk.StringVar(value="time.google.com")
 
         self.tls_host_var = tk.StringVar(value="0.0.0.0")
         self.tls_port_var = tk.StringVar(value="6000")
-        self.tls_ntp_var = tk.StringVar(value="system")
+        self.tls_ntp_var = tk.StringVar(value="time.google.com")
 
         self._build_labeled_entry(udp_group, "Host", self.udp_host_var, 0)
         self._build_labeled_entry(udp_group, "Port", self.udp_port_var, 1)

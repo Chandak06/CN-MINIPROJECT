@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="UDP time sync server")
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument("--ntp-server", default="pool.ntp.org")
+    parser.add_argument("--ntp-server", default="time.google.com")
     return parser.parse_args()
 
 

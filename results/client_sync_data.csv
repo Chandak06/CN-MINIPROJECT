@@ -1,1 +1,11 @@
-round,offset,delay,elapsed,reference_time
+round,offset,delay,elapsed,reference_time,time_source
+1,0.000261,0.000937,0.016,1774408285.449522,system-time (ntp unavailable)
+2,0.000429,0.001605,1.068,1774408286.500744,system-time (ntp unavailable)
+3,0.000434,0.001926,2.114,1774408287.546721,system-time (ntp unavailable)
+4,0.000533,0.001682,3.175,1774408288.608761,system-time (ntp unavailable)
+5,0.000419,0.001612,4.240,1774408289.673911,system-time (ntp unavailable)
+6,0.000659,0.002002,5.298,1774408290.732051,system-time (ntp unavailable)
+7,0.000255,0.001307,6.363,1774408291.797510,system-time (ntp unavailable)
+8,0.000613,0.001831,7.430,1774408292.864123,system-time (ntp unavailable)
+9,0.000565,0.001650,8.469,1774408293.904030,system-time (ntp unavailable)
+10,0.000474,0.001487,9.509,1774408294.944124,system-time (ntp unavailable)

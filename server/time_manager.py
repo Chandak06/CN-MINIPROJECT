@@ -2,11 +2,11 @@ import threading
 import time
 from typing import Optional
 
-from ntp_sync import compute_reference_offset, fetch_ntp_time
+from ntp_sync import compute_reference_offset, fetch_reference_time
 
 
 class MasterClock:
-    def __init__(self, ntp_server: str = "pool.ntp.org", sync_interval: int = 30) -> None:
+    def __init__(self, ntp_server: str = "time.google.com", sync_interval: int = 30) -> None:
         self.ntp_server = ntp_server
         self.sync_interval = sync_interval
         self._offset = 0.0
@@ -37,12 +37,12 @@ class MasterClock:
 
     def _sync_loop(self) -> None:
         while not self._stop_event.is_set():
-            ntp_time = fetch_ntp_time(self.ntp_server)
+            reference_time, source = fetch_reference_time(self.ntp_server)
             with self._lock:
-                if ntp_time is None:
+                if reference_time is None:
                     # Keep last known good offset; only mark status as degraded
-                    self._last_sync_status = "system-time (ntp unavailable)"
+                    self._last_sync_status = source
                 else:
-                    self._offset = compute_reference_offset(ntp_time)
-                    self._last_sync_status = f"ntp:{self.ntp_server}"
+                    self._offset = compute_reference_offset(reference_time)
+                    self._last_sync_status = source
             self._stop_event.wait(self.sync_interval)

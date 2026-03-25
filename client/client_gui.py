@@ -417,7 +417,7 @@ class ClientSyncGUI(tk.Tk):
         corrected_offset = self._compute_corrected_offset()
         mean_delay = statistics.mean(row.delay for row in self.rows)
         latest_source = self.rows[-1].time_source
-
+    
         self.live_offset_seconds = corrected_offset
         self.live_synced = True
         self.server_source_var.set(latest_source)
