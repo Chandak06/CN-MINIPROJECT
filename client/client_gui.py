@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import argparse
 import json
 import os
@@ -54,9 +54,9 @@ class SyncRow:
 class ClientSyncGUI(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Secure Client Time Viewer")
-        self.geometry("980x650")
-        self.minsize(840, 560)
+        self.title("Secure Client Time Sync")
+        self.geometry("1200x750")
+        self.minsize(1000, 650)
 
         self.worker: threading.Thread | None = None
         self.stop_event = threading.Event()
@@ -91,31 +91,53 @@ class ClientSyncGUI(tk.Tk):
         style = ttk.Style(self)
         style.theme_use("clam")
 
-        bg = "#0F172A"
-        panel = "#1E293B"
-        fg = "#E2E8F0"
+        bg = "#081423"
+        panel = "#10243A"
+        panel_alt = "#16314E"
+        card = "#1A3A5C"
+        fg = "#E6F0FA"
+        muted = "#9CB2C9"
+        accent = "#46D28B"
 
         self.configure(bg=bg)
         style.configure("TFrame", background=bg)
         style.configure("Panel.TFrame", background=panel)
-        style.configure("TLabel", background=bg, foreground=fg, font=("Segoe UI", 10))
-        style.configure("Header.TLabel", background=bg, foreground=fg, font=("Segoe UI Semibold", 16))
+        style.configure("AltPanel.TFrame", background=panel_alt)
+        style.configure("Card.TFrame", background=card)
+        style.configure("Header.TLabel", background=bg, foreground=fg, font=("Segoe UI Semibold", 19))
+        style.configure("Muted.TLabel", background=bg, foreground=muted, font=("Segoe UI", 10))
         style.configure("PanelLabel.TLabel", background=panel, foreground=fg, font=("Segoe UI", 10))
-        style.configure("TButton", padding=6, font=("Segoe UI Semibold", 10))
-        style.configure("Treeview", font=("Segoe UI", 10), rowheight=24)
-        style.configure("Treeview.Heading", font=("Segoe UI Semibold", 10))
+        style.configure("CardTitle.TLabel", background=card, foreground=muted, font=("Segoe UI Semibold", 10))
+        style.configure("CardValue.TLabel", background=card, foreground=fg, font=("Segoe UI Semibold", 20))
+        style.configure("TLabel", background=bg, foreground=fg, font=("Segoe UI", 10))
+        style.configure("TButton", font=("Segoe UI Semibold", 10), padding=6)
+        style.configure("Primary.TButton", foreground="#062213")
+        style.map("Primary.TButton", background=[("!disabled", accent)], foreground=[("!disabled", "#062213")])
+        style.configure("StatusGreen.TLabel", background=panel, foreground="#4ADE80", font=("Segoe UI Semibold", 10))
+        style.configure("StatusRed.TLabel", background=panel, foreground="#F97373", font=("Segoe UI Semibold", 10))
+        style.configure("TLabelframe", background=panel, foreground=fg)
+        style.configure("TLabelframe.Label", background=panel, foreground=fg, font=("Segoe UI Semibold", 10))
+        style.configure("TNotebook", background=bg, borderwidth=0)
+        style.configure("TNotebook.Tab", font=("Segoe UI Semibold", 10), padding=(14, 8))
+        style.configure("Treeview", rowheight=24, fieldbackground="#0B1D30", background="#0B1D30", foreground=fg)
+        style.configure("Treeview.Heading", background="#12304D", foreground=fg, font=("Segoe UI Semibold", 10))
 
     def _build_ui(self) -> None:
-        outer = ttk.Frame(self, padding=14)
-        outer.pack(fill="both", expand=True)
+        root = ttk.Frame(self)
+        root.pack(fill="both", expand=True, padx=14, pady=12)
 
-        ttk.Label(outer, text="Secure Client Time Viewer", style="Header.TLabel").pack(anchor="w")
+        header = ttk.Frame(root)
+        header.pack(fill="x")
+        ttk.Label(header, text="Secure Client Time Sync", style="Header.TLabel").pack(anchor="w")
         ttk.Label(
-            outer,
-            text="Runs TLS sync rounds and shows the exact server time received in each response.",
-        ).pack(anchor="w", pady=(2, 10))
+            header,
+            text="Connect to TLS server, perform time synchronization, and analyze clock offset and delay patterns.",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(2, 0))
 
-        notebook = ttk.Notebook(outer)
+        ttk.Separator(root, orient="horizontal").pack(fill="x", pady=(8, 12))
+
+        notebook = ttk.Notebook(root)
         notebook.pack(fill="both", expand=True)
 
         self.sync_tab = ttk.Frame(notebook)
@@ -130,55 +152,34 @@ class ClientSyncGUI(tk.Tk):
         self._build_analysis_tab()
 
     def _build_sync_tab(self) -> None:
-        outer = ttk.Frame(self.sync_tab)
-        outer.pack(fill="both", expand=True)
+        outer = ttk.Frame(self.sync_tab, style="Panel.TFrame", padding=14)
+        outer.pack(fill="both", expand=True, padx=10, pady=10)
 
-        config = ttk.LabelFrame(outer, text="Connection and Sync Settings", padding=12)
-        config.pack(fill="x")
+        cfg = ttk.LabelFrame(outer, text="Connection and Sync Settings", padding=12)
+        cfg.pack(fill="x")
 
-        self._entry_row(config, "Server Host", self.host_var, 0)
-        self._entry_row(config, "Server Port", self.port_var, 1)
-        self._entry_row(config, "TLS Hostname", self.hostname_var, 2)
-        self._entry_row(config, "Rounds", self.rounds_var, 3)
-        self._entry_row(config, "Interval Between Rounds (s)", self.interval_var, 4)
-        self._entry_row(config, "Output CSV", self.output_var, 5)
+        self._build_labeled_entry(cfg, "Server Host", self.host_var, 0)
+        self._build_labeled_entry(cfg, "Server Port", self.port_var, 1)
+        self._build_labeled_entry(cfg, "TLS Hostname", self.hostname_var, 2)
+        self._build_labeled_entry(cfg, "Rounds", self.rounds_var, 3)
+        self._build_labeled_entry(cfg, "Interval Between Rounds (s)", self.interval_var, 4)
+        self._build_labeled_entry(cfg, "Output CSV", self.output_var, 5)
 
-        actions = ttk.Frame(config)
+        actions = ttk.Frame(cfg)
         actions.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        self.choose_output_btn = ttk.Button(actions, text="Choose Output", command=self._choose_output_path)
-        self.start_btn = ttk.Button(actions, text="Start Sync", command=self.start_sync)
+        ttk.Button(actions, text="Choose Output", command=self._choose_output_path).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Start Sync", style="Primary.TButton", command=self.start_sync).pack(side="left", padx=(0, 8))
         self.stop_btn = ttk.Button(actions, text="Stop", command=self.stop_sync, state="disabled")
-        self.clear_btn = ttk.Button(actions, text="Clear Table", command=self.clear_table)
-        self.choose_output_btn.pack(side="left", padx=(0, 8))
-        self.start_btn.pack(side="left", padx=(0, 8))
         self.stop_btn.pack(side="left", padx=(0, 8))
-        self.clear_btn.pack(side="left")
+        ttk.Button(actions, text="Clear Table", command=self.clear_table).pack(side="left")
 
-        status_panel = ttk.Frame(outer, style="Panel.TFrame", padding=10)
-        status_panel.pack(fill="x", pady=(12, 10))
+        status_frame = ttk.Frame(outer)
+        status_frame.pack(fill="x", pady=(12, 10))
+        status_frame.columnconfigure((0, 1, 2, 3), weight=1)
+        self._build_kpi_card(status_frame, "Status", self.status_var, 0)
+        self._build_kpi_card(status_frame, "Latest Source", self.server_source_var, 1)
 
-        ttk.Label(status_panel, text="Status:", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ttk.Label(status_panel, textvariable=self.status_var, style="PanelLabel.TLabel").grid(row=0, column=1, sticky="w")
-        ttk.Label(status_panel, text="Latest Server Time Received:", style="PanelLabel.TLabel").grid(
-            row=1, column=0, sticky="w", padx=(0, 8), pady=(4, 0)
-        )
-        ttk.Label(status_panel, textvariable=self.server_time_var, style="PanelLabel.TLabel").grid(
-            row=1, column=1, sticky="w", pady=(4, 0)
-        )
-        ttk.Label(status_panel, text="Latest Local Receive Time (T4):", style="PanelLabel.TLabel").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=(4, 0)
-        )
-        ttk.Label(status_panel, textvariable=self.local_receive_var, style="PanelLabel.TLabel").grid(
-            row=2, column=1, sticky="w", pady=(4, 0)
-        )
-        ttk.Label(status_panel, text="Server Time Source:", style="PanelLabel.TLabel").grid(
-            row=3, column=0, sticky="w", padx=(0, 8), pady=(4, 0)
-        )
-        ttk.Label(status_panel, textvariable=self.server_source_var, style="PanelLabel.TLabel").grid(
-            row=3, column=1, sticky="w", pady=(4, 0)
-        )
-        status_panel.columnconfigure(1, weight=1)
-
+        ttk.Label(outer, text="Sync Samples", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 4))
         table_frame = ttk.Frame(outer)
         table_frame.pack(fill="both", expand=True)
 
@@ -186,17 +187,17 @@ class ClientSyncGUI(tk.Tk):
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         headings = {
             "round": "Round",
-            "server_time": "Server Time (reference_time)",
+            "server_time": "Server Time",
             "offset": "Offset (s)",
             "delay": "Delay (s)",
-            "receive_time": "Client Receive Time T4",
+            "receive_time": "Client T4 (local)",
         }
         widths = {
-            "round": 80,
-            "server_time": 280,
+            "round": 70,
+            "server_time": 220,
             "offset": 120,
             "delay": 120,
-            "receive_time": 260,
+            "receive_time": 240,
         }
         for key in columns:
             self.tree.heading(key, text=headings[key])
@@ -207,71 +208,136 @@ class ClientSyncGUI(tk.Tk):
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+    def _build_kpi_card(self, parent: ttk.Widget, label: str, value_var: tk.StringVar, column: int) -> None:
+        card = ttk.Frame(parent, style="Card.TFrame", padding=12)
+        card.grid(row=0, column=column, sticky="nsew", padx=6)
+        ttk.Label(card, text=label, style="CardTitle.TLabel").pack(anchor="w")
+        ttk.Label(card, textvariable=value_var, style="CardValue.TLabel").pack(anchor="w", pady=(4, 0))
+
     def _build_live_time_tab(self) -> None:
-        outer = ttk.Frame(self.live_time_tab)
-        outer.pack(fill="both", expand=True)
+        outer = ttk.Frame(self.live_time_tab, style="Panel.TFrame", padding=14)
+        outer.pack(fill="both", expand=True, padx=10, pady=10)
 
-        config = ttk.LabelFrame(outer, text="Server Time Source", padding=12)
-        config.pack(fill="x")
+        cfg = ttk.LabelFrame(outer, text="Server Time Source", padding=12)
+        cfg.pack(fill="x")
 
-        self._entry_row(config, "Server Host", self.host_var, 0)
-        self._entry_row(config, "Server Port", self.port_var, 1)
-        self._entry_row(config, "TLS Hostname", self.hostname_var, 2)
+        self._build_labeled_entry(cfg, "Server Host", self.host_var, 0)
+        self._build_labeled_entry(cfg, "Server Port", self.port_var, 1)
+        self._build_labeled_entry(cfg, "TLS Hostname", self.hostname_var, 2)
 
-        actions = ttk.Frame(config)
+        actions = ttk.Frame(cfg)
         actions.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        ttk.Button(actions, text="Sync From Server", command=self.sync_live_time).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Sync From Server", style="Primary.TButton", command=self.sync_live_time).pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Use Local Clock", command=self.reset_live_time_to_local).pack(side="left")
 
-        # Local Clock Display
-        local_panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
-        local_panel.pack(fill="x", pady=(12, 0))
-        ttk.Label(local_panel, text="Local Clock (Client Time)", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
-        ttk.Label(local_panel, textvariable=self.live_local_time_var, style="PanelLabel.TLabel", font=("Consolas", 18, "bold")).grid(
-            row=0, column=1, sticky="w"
-        )
+        local_panel = ttk.Frame(outer, style="AltPanel.TFrame", padding=16)
+        local_panel.pack(fill="x", pady=(12, 6))
+        ttk.Label(local_panel, text="Local Clock", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(local_panel, textvariable=self.live_local_time_var, style="PanelLabel.TLabel", font=("Consolas", 18, "bold")).grid(row=0, column=1, sticky="w")
 
-        # Offset Display
-        offset_panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
+        offset_panel = ttk.Frame(outer, style="AltPanel.TFrame", padding=16)
         offset_panel.pack(fill="x", pady=6)
-        ttk.Label(offset_panel, text="Offset Added/Subtracted", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
-        ttk.Label(offset_panel, textvariable=self.live_offset_display_var, style="PanelLabel.TLabel", font=("Consolas", 14)).grid(
-            row=0, column=1, sticky="w"
-        )
+        ttk.Label(offset_panel, text="Offset Applied", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(offset_panel, textvariable=self.live_offset_display_var, style="PanelLabel.TLabel", font=("Consolas", 14)).grid(row=0, column=1, sticky="w")
 
-        # Server Synced Time Display
-        synced_panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
-        synced_panel.pack(fill="x", pady=(0, 12))
-        ttk.Label(synced_panel, text="Server Synced Time (Local + Offset)", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
-        ttk.Label(synced_panel, textvariable=self.live_time_var, style="PanelLabel.TLabel", font=("Consolas", 18, "bold")).grid(
-            row=0, column=1, sticky="w"
-        )
+        synced_panel = ttk.Frame(outer, style="AltPanel.TFrame", padding=16)
+        synced_panel.pack(fill="x", pady=6)
+        ttk.Label(synced_panel, text="Synced Server Time", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(synced_panel, textvariable=self.live_time_var, style="PanelLabel.TLabel", font=("Consolas", 18, "bold")).grid(row=0, column=1, sticky="w")
 
-        # Status Panel
-        status_panel = ttk.Frame(outer, style="Panel.TFrame", padding=12)
+        status_panel = ttk.Frame(outer, style="AltPanel.TFrame", padding=16)
         status_panel.pack(fill="x")
-        ttk.Label(status_panel, text="Status", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
-        ttk.Label(status_panel, textvariable=self.live_time_status_var, style="PanelLabel.TLabel").grid(
-            row=0, column=1, sticky="w"
+        ttk.Label(status_panel, text="Status", style="PanelLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ttk.Label(status_panel, textvariable=self.live_time_status_var, style="PanelLabel.TLabel").grid(row=0, column=1, sticky="w")
+
+    def _build_labeled_entry(self, parent: ttk.Widget, label: str, var: tk.StringVar, row: int) -> None:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
+        ttk.Entry(parent, textvariable=var, width=48).grid(row=row, column=1, sticky="ew", pady=6)
+        parent.columnconfigure(1, weight=1)
+
+    def _build_analysis_tab(self) -> None:
+        outer = ttk.Frame(self.analysis_tab, style="Panel.TFrame", padding=14)
+        outer.pack(fill="both", expand=True, padx=10, pady=10)
+
+        top = ttk.LabelFrame(outer, text="Analysis Configuration", padding=12)
+        top.pack(fill="x")
+
+        self._build_labeled_entry(top, "Input CSV", self.analysis_input_var, 0)
+        self._build_labeled_entry(top, "Output Plot (optional)", self.analysis_output_var, 1)
+
+        actions = ttk.Frame(top)
+        actions.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(actions, text="Choose CSV", command=self._choose_input_csv).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Load CSV", command=self.load_csv_table_and_plot).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Drift Estimator", style="Primary.TButton", command=self.run_drift_analysis).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Accuracy Eval", command=self.run_accuracy_analysis).pack(side="left", padx=(0, 8))
+        ttk.Button(actions, text="Generate Plot", command=self.run_plot_script).pack(side="left")
+
+        middle = ttk.Frame(outer)
+        middle.pack(fill="both", expand=True, pady=(12, 0))
+        middle.columnconfigure(0, weight=1)
+        middle.columnconfigure(1, weight=1)
+        middle.rowconfigure(0, weight=1)
+
+        table_panel = ttk.Frame(middle, style="AltPanel.TFrame", padding=12)
+        plot_panel = ttk.Frame(middle, style="AltPanel.TFrame", padding=12)
+        table_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        plot_panel.grid(row=0, column=1, sticky="nsew")
+
+        ttk.Label(table_panel, text="Latest Samples", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 6))
+        self.analysis_tree = ttk.Treeview(
+            table_panel,
+            columns=("round", "offset", "delay", "elapsed"),
+            show="headings",
+            height=15,
         )
+        for col, width in (("round", 80), ("offset", 130), ("delay", 130), ("elapsed", 130)):
+            self.analysis_tree.heading(col, text=col.capitalize())
+            self.analysis_tree.column(col, width=width, anchor="center")
+
+        table_scroll = ttk.Scrollbar(table_panel, orient="vertical", command=self.analysis_tree.yview)
+        self.analysis_tree.configure(yscrollcommand=table_scroll.set)
+        self.analysis_tree.pack(side="left", fill="both", expand=True)
+        table_scroll.pack(side="right", fill="y")
+
+        ttk.Label(plot_panel, text="Offset and Delay Trend", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 6))
+        self.figure = Figure(figsize=(5.6, 4.0), dpi=100)
+        self.ax_offset = self.figure.add_subplot(211)
+        self.ax_delay = self.figure.add_subplot(212)
+        self._style_analysis_plot()
+        self.figure.tight_layout(pad=1.8)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=plot_panel)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+    def _style_analysis_plot(self) -> None:
+        """Apply dark theme styling to analysis plots."""
+        for ax in [self.ax_offset, self.ax_delay]:
+            ax.set_facecolor("#0B1D30")
+            ax.tick_params(colors="#DDE9F7")
+            ax.grid(alpha=0.25, color="#4A6D90")
+            for spine in ax.spines.values():
+                spine.set_color("#55799D")
+        self.ax_offset.set_title("Offset Trend", color="#E6F0FA")
+        self.ax_offset.set_ylabel("Offset (s)", color="#E6F0FA")
+        self.ax_delay.set_title("Delay Trend", color="#E6F0FA")
+        self.ax_delay.set_ylabel("Delay (s)", color="#E6F0FA")
+        self.ax_delay.set_xlabel("Round", color="#E6F0FA")
 
     def _tick_live_time(self) -> None:
         now = time.time()
         local_display = datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self.live_local_time_var.set(local_display)
-        
-        # Update offset display
+
         if self.live_synced and self.live_offset_seconds != 0.0:
             sign = "+" if self.live_offset_seconds > 0 else "-"
             self.live_offset_display_var.set(f"{sign} {abs(self.live_offset_seconds):.6f} seconds")
         else:
             self.live_offset_display_var.set("No sync applied (0.000000 seconds)")
-        
-        # Update synced time display
+
         synced_now = now + (self.live_offset_seconds if self.live_synced else 0.0)
         synced_display = datetime.fromtimestamp(synced_now).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self.live_time_var.set(synced_display)
-        
+
         self.after(120, self._tick_live_time)
 
     def sync_live_time(self) -> None:
@@ -323,7 +389,7 @@ class ClientSyncGUI(tk.Tk):
         self.live_offset_seconds = offset
         self.live_synced = True
         self.server_source_var.set(source)
-        self.live_time_status_var.set(f"Synced to server (delay {delay:.4f}s, offset {offset:.4f}s, source {source})")
+        self.live_time_status_var.set(f"Synced (delay {delay:.4f}s, offset {offset:.4f}s, source {source})")
 
     def _on_live_time_sync_failed(self, message: str) -> None:
         self.live_time_status_var.set("Sync failed; using local clock")
@@ -341,124 +407,36 @@ class ClientSyncGUI(tk.Tk):
         except OSError:
             return False
 
-    def _build_analysis_tab(self) -> None:
-        outer = ttk.Frame(self.analysis_tab)
-        outer.pack(fill="both", expand=True)
-
-        top = ttk.LabelFrame(outer, text="Analysis Configuration", padding=12)
-        top.pack(fill="x")
-
-        self._entry_row(top, "Input CSV", self.analysis_input_var, 0)
-        self._entry_row(top, "Output Plot (optional)", self.analysis_output_var, 1)
-
-        actions = ttk.Frame(top)
-        actions.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        ttk.Button(actions, text="Choose CSV", command=self._choose_input_csv).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Load CSV", command=self.load_csv_table_and_plot).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Run Drift Estimator", command=self.run_drift_analysis).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Run Accuracy Eval", command=self.run_accuracy_analysis).pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Generate Plot File", command=self.run_plot_script).pack(side="left")
-
-        middle = ttk.Frame(outer)
-        middle.pack(fill="both", expand=True, pady=(12, 0))
-        middle.columnconfigure(0, weight=1)
-        middle.columnconfigure(1, weight=1)
-        middle.rowconfigure(0, weight=1)
-
-        table_panel = ttk.Frame(middle, style="Panel.TFrame", padding=10)
-        plot_panel = ttk.Frame(middle, style="Panel.TFrame", padding=10)
-        table_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        plot_panel.grid(row=0, column=1, sticky="nsew")
-
-        ttk.Label(table_panel, text="Latest Samples", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 6))
-        self.analysis_tree = ttk.Treeview(
-            table_panel,
-            columns=("round", "offset", "delay", "elapsed"),
-            show="headings",
-            height=15,
+    def _choose_input_csv(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Select sync_data.csv",
+            initialdir=os.path.join(PROJECT_ROOT, "results"),
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
         )
-        for col, width in (("round", 80), ("offset", 130), ("delay", 130), ("elapsed", 130)):
-            self.analysis_tree.heading(col, text=col.capitalize())
-            self.analysis_tree.column(col, width=width, anchor="center")
+        if selected:
+            self.analysis_input_var.set(selected)
 
-        table_scroll = ttk.Scrollbar(table_panel, orient="vertical", command=self.analysis_tree.yview)
-        self.analysis_tree.configure(yscrollcommand=table_scroll.set)
-        self.analysis_tree.pack(side="left", fill="both", expand=True)
-        table_scroll.pack(side="right", fill="y")
-
-        ttk.Label(plot_panel, text="Offset and Delay Trend", style="PanelLabel.TLabel").pack(anchor="w", pady=(0, 6))
-        self.figure = Figure(figsize=(5.4, 4.2), dpi=100)
-        self.ax_offset = self.figure.add_subplot(211)
-        self.ax_delay = self.figure.add_subplot(212)
-        self.figure.tight_layout(pad=1.8)
-        self.canvas = FigureCanvasTkAgg(self.figure, master=plot_panel)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True)
-
-    def _entry_row(self, parent: ttk.Widget, label: str, var: tk.StringVar, row: int) -> None:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=4)
-        ttk.Entry(parent, textvariable=var, width=44).grid(row=row, column=1, sticky="ew", pady=4)
-        parent.columnconfigure(1, weight=1)
-
-    def _format_timestamp(self, ts: float) -> str:
-        readable = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        return f"{readable} ({ts:.6f})"
-
-    def _compute_corrected_offset(self) -> float:
-        """Compute corrected offset using mean offset from all samples."""
-        if not self.rows:
-            return 0.0
-        offsets = [row.offset for row in self.rows]
-        return float(statistics.mean(offsets))
-
-    def _apply_post_sync_correction(self) -> None:
-        if not self.rows:
-            return
-
-        corrected_offset = self._compute_corrected_offset()
-        mean_delay = statistics.mean(row.delay for row in self.rows)
-        latest_source = self.rows[-1].time_source
-    
-        self.live_offset_seconds = corrected_offset
-        self.live_synced = True
-        self.server_source_var.set(latest_source)
-        self.live_time_status_var.set(
-            f"Auto-corrected from {len(self.rows)} rounds (mean delay {mean_delay:.4f}s, mean offset {corrected_offset:.4f}s, source {latest_source})"
+    def _choose_output_path(self) -> None:
+        selected = filedialog.asksaveasfilename(
+            title="Select output CSV",
+            defaultextension=".csv",
+            initialdir=os.path.join(PROJECT_ROOT, "results"),
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
         )
-
-    def _set_running_ui(self, running: bool) -> None:
-        self.start_btn.configure(state="disabled" if running else "normal")
-        self.stop_btn.configure(state="normal" if running else "disabled")
-        self.choose_output_btn.configure(state="disabled" if running else "normal")
+        if selected:
+            self.output_var.set(selected)
 
     def _friendly_sync_error(self, exc: Exception, host: str, port: int, server_hostname: str) -> str:
         if isinstance(exc, ConnectionRefusedError):
-            return (
-                f"Connection refused by {host}:{port}.\n\n"
-                "Start the TLS server first, for example:\n"
-                f"python server/secure_server.py --host 0.0.0.0 --port {port}"
-            )
-
+            return f"Connection refused by {host}:{port}.\n\nStart the TLS server first, for example:\npython server/secure_server.py --host 0.0.0.0 --port {port}"
         if isinstance(exc, socket.timeout):
-            return (
-                f"Connection to {host}:{port} timed out after {SOCKET_TIMEOUT_SECONDS} seconds.\n\n"
-                "Check server IP/port and firewall rules on the server machine."
-            )
-
+            return f"Connection to {host}:{port} timed out after {SOCKET_TIMEOUT_SECONDS} seconds.\n\nCheck server IP/port and firewall rules."
         if isinstance(exc, ssl.SSLCertVerificationError):
-            return (
-                "TLS certificate verification failed.\n\n"
-                f"Reason: {exc}\n"
-                f"Current TLS hostname: {server_hostname}\n"
-                "Ensure the client trusts the same security/cert.pem presented by the server, "
-                "and that this hostname/IP exists in the certificate SAN entries."
-            )
-
+            return f"TLS certificate verification failed.\n\nReason: {exc}\nCurrent TLS hostname: {server_hostname}\nEnsure the client trusts security/cert.pem."
         if isinstance(exc, ssl.SSLError):
             return f"TLS handshake failed: {exc}"
-
         if isinstance(exc, OSError):
             return f"Network error while connecting to {host}:{port}: {exc}"
-
         return str(exc)
 
     def start_sync(self) -> None:
@@ -482,10 +460,7 @@ class ClientSyncGUI(tk.Tk):
             return
 
         if not self._is_server_reachable(host, port):
-            messagebox.showerror(
-                "Server unavailable",
-                f"No server is reachable at {host}:{port}. Start secure_server.py first.",
-            )
+            messagebox.showerror("Server unavailable", f"No server is reachable at {host}:{port}. Start secure_server.py first.")
             self.status_var.set("Server unavailable")
             return
 
@@ -506,8 +481,7 @@ class ClientSyncGUI(tk.Tk):
 
         self.stop_event.clear()
         self.status_var.set("Running...")
-        self._set_running_ui(True)
-
+        self.stop_btn.configure(state="normal")
         self.worker = threading.Thread(
             target=self._run_sync_session,
             args=(host, port, server_hostname, rounds, interval_seconds),
@@ -610,18 +584,16 @@ class ClientSyncGUI(tk.Tk):
 
     def _append_row(self, row: SyncRow) -> None:
         self.rows.append(row)
-        self.server_time_var.set(self._format_timestamp(row.server_time))
-        self.local_receive_var.set(self._format_timestamp(row.receive_time))
         self.server_source_var.set(row.time_source)
         self.tree.insert(
             "",
             "end",
             values=(
                 row.round_id,
-                self._format_timestamp(row.server_time),
+                datetime.fromtimestamp(row.server_time).strftime("%Y-%m-%d %H:%M:%S"),
                 f"{row.offset:.6f}",
                 f"{row.delay:.6f}",
-                self._format_timestamp(row.receive_time),
+                datetime.fromtimestamp(row.receive_time).strftime("%Y-%m-%d %H:%M:%S"),
             ),
         )
 
@@ -664,7 +636,7 @@ class ClientSyncGUI(tk.Tk):
 
         if completed.returncode != 0:
             details = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
-            messagebox.showerror(label, f"{label} failed.\n\n{details.strip() or 'No output received.'}")
+            messagebox.showerror(label, f"{label} failed.\n\n{details.strip() or "No output received."}")
             return
 
         output = ((completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")).strip()
@@ -744,50 +716,46 @@ class ClientSyncGUI(tk.Tk):
         self.ax_delay.clear()
 
         if rounds:
-            self.ax_offset.plot(rounds, offsets, marker="o", color="#22D3EE")
-            self.ax_offset.set_title("Offset Trend")
-            self.ax_offset.set_ylabel("Offset (s)")
-            self.ax_offset.grid(alpha=0.3)
-
-            self.ax_delay.plot(rounds, delays, marker="s", color="#F97316")
-            self.ax_delay.set_title("Delay Trend")
-            self.ax_delay.set_xlabel("Round")
-            self.ax_delay.set_ylabel("Delay (s)")
-            self.ax_delay.grid(alpha=0.3)
+            self.ax_offset.plot(rounds, offsets, marker="o", color="#34D399", linewidth=2, markersize=6)
+            self.ax_delay.plot(rounds, delays, marker="s", color="#60A5FA", linewidth=2, markersize=6)
         else:
-            self.ax_offset.text(0.5, 0.5, "No valid rows", ha="center", va="center")
-            self.ax_delay.text(0.5, 0.5, "No valid rows", ha="center", va="center")
+            self.ax_offset.text(0.5, 0.5, "No valid rows", ha="center", va="center", color="#E6F0FA")
+            self.ax_delay.text(0.5, 0.5, "No valid rows", ha="center", va="center", color="#E6F0FA")
 
+        self._style_analysis_plot()
         self.figure.tight_layout(pad=1.8)
         self.canvas.draw_idle()
 
-    def _choose_input_csv(self) -> None:
-        selected = filedialog.askopenfilename(
-            title="Select sync_data.csv",
-            initialdir=os.path.join(PROJECT_ROOT, "results"),
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-        )
-        if selected:
-            self.analysis_input_var.set(selected)
-
-    def _choose_output_path(self) -> None:
-        selected = filedialog.asksaveasfilename(
-            title="Select output CSV",
-            defaultextension=".csv",
-            initialdir=os.path.join(PROJECT_ROOT, "results"),
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-        )
-        if selected:
-            self.output_var.set(selected)
-
     def _handle_error(self, message: str) -> None:
-        self._set_running_ui(False)
+        self.stop_btn.configure(state="disabled")
         self.status_var.set("Error")
         messagebox.showerror("Sync failed", message)
 
     def _finish_status(self, message: str) -> None:
-        self._set_running_ui(False)
+        self.stop_btn.configure(state="disabled")
         self.status_var.set(message)
+
+    def _compute_corrected_offset(self) -> float:
+        """Compute corrected offset using mean offset from all samples."""
+        if not self.rows:
+            return 0.0
+        offsets = [row.offset for row in self.rows]
+        return float(statistics.mean(offsets))
+
+    def _apply_post_sync_correction(self) -> None:
+        if not self.rows:
+            return
+
+        corrected_offset = self._compute_corrected_offset()
+        mean_delay = statistics.mean(row.delay for row in self.rows)
+        latest_source = self.rows[-1].time_source
+
+        self.live_offset_seconds = corrected_offset
+        self.live_synced = True
+        self.server_source_var.set(latest_source)
+        self.live_time_status_var.set(
+            f"Auto-corrected from {len(self.rows)} rounds (mean delay {mean_delay:.4f}s, mean offset {corrected_offset:.4f}s)"
+        )
 
     def _on_close(self) -> None:
         self.stop_event.set()

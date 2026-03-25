@@ -57,7 +57,6 @@ A modular Python implementation of distributed clock synchronization using an NT
 ```
 CN-MINIPROJECT/
 ├── generate_cert.py          # Generate self-signed TLS cert+key
-├── gui_app.py                # Tkinter GUI control center
 ├── requirements.txt
 ├── results/
 │   └── sync_data.csv         # Written by each client run (overwritten each run)
@@ -65,10 +64,12 @@ CN-MINIPROJECT/
 ├── server/
 │   ├── server.py             # UDP time-sync server (no TLS)
 │   ├── secure_server.py      # TLS/TCP time-sync server (primary)
+│   ├── server_gui.py         # Monitoring console (dashboard, proof, stress, security)
 │   ├── ntp_sync.py           # NTP fetch helper (ntplib)
 │   └── time_manager.py       # MasterClock — NTP-backed, thread-safe
 ├── client/
-│   ├── client.py             # Main TLS client (used by GUI)
+│   ├── client.py             # Main TLS client (threaded multi-client support)
+│   ├── client_gui.py         # Client-side visualization and analysis GUI
 │   ├── secure_client.py      # Legacy multi-client TLS client
 │   ├── sync_algorithm.py     # Offset & delay formulas (T1–T4)
 │   └── time_adjuster.py      # corrected_time() helper
@@ -118,16 +119,28 @@ This writes `security/cert.pem` and `security/key.pem`.
 python server/secure_server.py --host 0.0.0.0 --port 6000
 ```
 
+Optional concurrency tuning:
+
+```powershell
+python server/secure_server.py --host 0.0.0.0 --port 6000 --max-workers 64 --max-queue 500 --backlog 200
+```
+
 ### Run the client (same machine or LAN)
 
 ```powershell
-python client/client.py --host 127.0.0.1 --port 6000 --server-hostname localhost --rounds 10 --drift 0.5
+python client/client.py --host 127.0.0.1 --port 6000 --server-hostname localhost --rounds 10
+```
+
+Threaded multi-client stress run:
+
+```powershell
+python client/client.py --host 127.0.0.1 --port 6000 --server-hostname localhost --rounds 20 --clients 25 --stagger-ms 10
 ```
 
 ### Run the client GUI (shows server time received)
 
 ```powershell
-python client/client_gui.py --host 127.0.0.1 --port 6000 --server-hostname localhost --rounds 10 --drift 0.5
+python client/client_gui.py --host 127.0.0.1 --port 6000 --server-hostname localhost --rounds 10
 ```
 
 In the client GUI, the table column `Server Time (reference_time)` shows the exact server timestamp returned by the TLS server response for each round.
@@ -140,7 +153,8 @@ Arguments:
 | `--port` | `6000` | Server port |
 | `--server-hostname` | same as `--host` | TLS SNI hostname (must match cert SAN) |
 | `--rounds` | `10` | Number of sync rounds |
-| `--drift` | `0.5` | Simulated local clock drift in seconds |
+| `--clients` | `1` | Number of concurrent threaded client sessions |
+| `--stagger-ms` | `50` | Milliseconds between starting each client thread |
 | `--output` | `results/sync_data.csv` | CSV output path (overwritten each run) |
 
 ### Optional: UDP server (no TLS, demo only)
@@ -149,28 +163,38 @@ Arguments:
 python server/server.py --host 0.0.0.0 --port 5005
 ```
 
+Optional UDP concurrency tuning:
+
+```powershell
+python server/server.py --host 0.0.0.0 --port 5005 --max-workers 64 --max-queue 2000
+```
+
 ---
 
 ## Running the GUI
 
+### Server Monitoring Console
+
 ```powershell
-python gui_app.py
+python server/server_gui.py
 ```
 
 Tabs:
 
 | Tab | Purpose |
 |-----|---------|
-| **Dashboard** | Quick start/stop buttons + live log |
-| **Server Control** | Configure and launch UDP or TLS server |
-| **Client Sync** | Configure and run the TLS client |
-| **Analysis** | Load CSV, view plots, run drift/accuracy scripts |
+| **Dashboard** | Start/stop controls, live logs, and KPI cards (responses/errors/drops/TLS failures) |
+| **Server Control** | Configure and launch UDP/TLS server with concurrency settings |
+| **Visual Proof** | Live charts for drift proxy (offset), delay trend, and sync accuracy over time |
+| **Stress Lab** | Multi-client simulation launcher with throughput/success metrics |
+| **Security** | Secure vs insecure comparison and attack-scenario explanation |
+| **Live Time** | Local vs server-corrected time display |
 
-**Typical workflow:**
-1. *Server Control* → Start TLS → confirm green status
-2. *Client Sync* → Run Client Sync → watch rounds complete in log
-3. *Analysis* → Load CSV → inspect table and inline plot
-4. Optionally run Drift Estimator / Accuracy Eval from the Analysis tab
+### Client-Side GUI
+
+```powershell
+python client/client_gui.py --host 127.0.0.1 --port 6000 --server-hostname localhost --rounds 10
+```
 
 ---
 

@@ -10,6 +10,7 @@ offset and delay measurements remain accurate.
 Requires security/cert.pem + security/key.pem (run generate_cert.py first).
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import os
 import random
 import socket
@@ -46,6 +47,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--ntp-server", default="time.google.com")
+    parser.add_argument("--max-workers", type=int, default=max(8, (os.cpu_count() or 1) * 4))
+    parser.add_argument("--max-queue", type=int, default=100)
+    parser.add_argument("--backlog", type=int, default=50)
+    parser.add_argument("--accept-timeout", type=float, default=1.0)
     return parser.parse_args()
 
 
@@ -58,13 +63,18 @@ def main() -> None:
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((args.host, args.port))
-    server_socket.listen(20)
+    server_socket.listen(max(1, args.backlog))
+    server_socket.settimeout(max(0.1, args.accept_timeout))
 
     clock = MasterClock(ntp_server=args.ntp_server)
     clock.start()
 
     print("Secure Clock Synchronization Server Running...")
     print(f"Listening on {args.host}:{args.port}")
+    print(f"Thread pool: workers={args.max_workers}, queue={args.max_queue}, backlog={args.backlog}")
+
+    # Limit in-flight + queued requests to avoid unbounded memory/thread growth under stress.
+    pending_slots = threading.BoundedSemaphore(max(1, args.max_workers + args.max_queue))
 
     def handle_client(conn: ssl.SSLSocket, addr: tuple[str, int]) -> None:
         try:
@@ -92,22 +102,38 @@ def main() -> None:
             print(f"Client error ({addr}): {exc}")
         finally:
             conn.close()
+            pending_slots.release()
 
     try:
-        while True:
-            client_socket, addr = server_socket.accept()
-            try:
-                secure_conn = context.wrap_socket(client_socket, server_side=True)
-            except (ssl.SSLError, OSError) as exc:
-                message = str(exc)
-                # Plain TCP health checks (without TLS handshake) can cause benign EOF here.
-                if "UNEXPECTED_EOF_WHILE_READING" not in message:
-                    print(f"TLS handshake failed for {addr}: {exc}")
-                client_socket.close()
-                continue
+        with ThreadPoolExecutor(max_workers=max(1, args.max_workers)) as pool:
+            while True:
+                try:
+                    client_socket, addr = server_socket.accept()
+                except socket.timeout:
+                    continue
 
-            worker = threading.Thread(target=handle_client, args=(secure_conn, addr), daemon=True)
-            worker.start()
+                if not pending_slots.acquire(blocking=False):
+                    print(f"Overloaded, dropping connection from {addr}")
+                    client_socket.close()
+                    continue
+
+                try:
+                    secure_conn = context.wrap_socket(client_socket, server_side=True)
+                except (ssl.SSLError, OSError) as exc:
+                    message = str(exc)
+                    # Plain TCP health checks (without TLS handshake) can cause benign EOF here.
+                    if "UNEXPECTED_EOF_WHILE_READING" not in message:
+                        print(f"TLS handshake failed for {addr}: {exc}")
+                    client_socket.close()
+                    pending_slots.release()
+                    continue
+
+                try:
+                    pool.submit(handle_client, secure_conn, addr)
+                except RuntimeError:
+                    print("Worker pool is shutting down; rejecting new connection")
+                    secure_conn.close()
+                    pending_slots.release()
     except KeyboardInterrupt:
         print("\nSecure server stopped by user.")
     finally:

@@ -5,6 +5,7 @@ import socket
 import ssl
 import statistics
 import sys
+import threading
 import time
 from typing import Dict, List
 
@@ -41,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--server-hostname", default=None)
     parser.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS)
+    parser.add_argument("--clients", type=int, default=1, help="Concurrent client sessions for stress testing")
+    parser.add_argument("--stagger-ms", type=int, default=50, help="Delay between launching client threads")
     parser.add_argument("--output", default=DEFAULT_RESULTS)
     return parser.parse_args()
 
@@ -60,17 +63,21 @@ def _compute_corrected_offset(samples: List[Dict[str, float]]) -> float:
 def save_results(path: str, rows: List[Dict[str, float]]) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=["round", "offset", "delay", "elapsed", "reference_time", "time_source"])
+        writer = csv.DictWriter(
+            csv_file,
+            fieldnames=["client_id", "round", "offset", "delay", "elapsed", "reference_time", "time_source"],
+        )
         writer.writeheader()
         writer.writerows(rows)
 
 
-def run_session(host: str, port: int, server_hostname: str, rounds: int) -> List[Dict[str, float]]:
+def run_session(host: str, port: int, server_hostname: str, rounds: int, client_id: int = 1) -> List[Dict[str, float]]:
     context = ssl.create_default_context()
     context.load_verify_locations(CERT_FILE)
 
     samples: List[Dict[str, float]] = []
     start_monotonic = time.monotonic()
+    prefix = f"[Client {client_id}]"
 
     for request_id in range(1, rounds + 1):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as raw_socket:
@@ -93,6 +100,7 @@ def run_session(host: str, port: int, server_hostname: str, rounds: int) -> List
 
                 sync_values = compute_offset_and_delay(t1=t1, t2=packet["T2"], t3=packet["T3"], t4=t4)
                 sample = {
+                    "client_id": client_id,
                     "round": request_id,
                     "offset": sync_values["offset"],
                     "delay": sync_values["delay"],
@@ -103,7 +111,8 @@ def run_session(host: str, port: int, server_hostname: str, rounds: int) -> List
                 samples.append(sample)
 
                 print(
-                    f"Round {request_id}: offset={sample['offset']:.6f}s delay={sample['delay']:.6f}s source={sample['time_source']}"
+                    f"{prefix} Round {request_id}: offset={sample['offset']:.6f}s "
+                    f"delay={sample['delay']:.6f}s source={sample['time_source']}"
                 )
 
         time.sleep(REQUEST_INTERVAL_SECONDS)
@@ -111,9 +120,75 @@ def run_session(host: str, port: int, server_hostname: str, rounds: int) -> List
     return samples
 
 
+def run_multi_client_sessions(
+    host: str,
+    port: int,
+    server_hostname: str,
+    rounds: int,
+    clients: int,
+    stagger_ms: int,
+) -> List[Dict[str, float]]:
+    all_samples: List[Dict[str, float]] = []
+    errors: List[str] = []
+    samples_lock = threading.Lock()
+    errors_lock = threading.Lock()
+
+    def worker(client_id: int) -> None:
+        try:
+            samples = run_session(host=host, port=port, server_hostname=server_hostname, rounds=rounds, client_id=client_id)
+            with samples_lock:
+                all_samples.extend(samples)
+        except Exception as exc:
+            with errors_lock:
+                errors.append(f"Client {client_id}: {exc}")
+
+    threads = []
+    for client_id in range(1, clients + 1):
+        thread = threading.Thread(target=worker, args=(client_id,), daemon=False)
+        threads.append(thread)
+        thread.start()
+        if stagger_ms > 0:
+            time.sleep(stagger_ms / 1000.0)
+
+    for thread in threads:
+        thread.join()
+
+    if errors:
+        print("\n--- Client Errors ---")
+        for error in errors:
+            print(error)
+
+    all_samples.sort(key=lambda row: (int(row.get("client_id", 0)), int(row.get("round", 0))))
+    return all_samples
+
+
 def print_summary(samples: List[Dict[str, float]]) -> None:
     if not samples:
         print("No successful synchronization samples were collected.")
+        return
+
+    client_ids = sorted({int(sample.get("client_id", 1)) for sample in samples})
+    if len(client_ids) > 1:
+        offsets = [sample["offset"] for sample in samples]
+        delays = [sample["delay"] for sample in samples]
+        print("\n--- Multi-Client Synchronization Summary ---")
+        print(f"Clients completed: {len(client_ids)}")
+        print(f"Total samples: {len(samples)}")
+        print(f"Mean offset (all samples): {statistics.mean(offsets):.6f}s")
+        print(f"Mean delay  (all samples): {statistics.mean(delays):.6f}s")
+        print(f"Min delay / Max delay    : {min(delays):.6f}s / {max(delays):.6f}s")
+
+        for client_id in client_ids:
+            client_samples = [s for s in samples if int(s.get("client_id", 1)) == client_id]
+            if not client_samples:
+                continue
+            client_offsets = [s["offset"] for s in client_samples]
+            client_delays = [s["delay"] for s in client_samples]
+            print(
+                f"Client {client_id}: samples={len(client_samples)} "
+                f"mean_offset={statistics.mean(client_offsets):.6f}s "
+                f"mean_delay={statistics.mean(client_delays):.6f}s"
+            )
         return
 
     offsets = [sample["offset"] for sample in samples]
@@ -154,13 +229,29 @@ def print_summary(samples: List[Dict[str, float]]) -> None:
 def main() -> None:
     args = parse_args()
     server_hostname = args.server_hostname or args.host
+    rounds = max(1, args.rounds)
+    clients = max(1, args.clients)
+    stagger_ms = max(0, args.stagger_ms)
+
     try:
-        samples = run_session(
-            host=args.host,
-            port=args.port,
-            server_hostname=server_hostname,
-            rounds=max(1, args.rounds),
-        )
+        if clients == 1:
+            samples = run_session(
+                host=args.host,
+                port=args.port,
+                server_hostname=server_hostname,
+                rounds=rounds,
+                client_id=1,
+            )
+        else:
+            print(f"Launching {clients} concurrent clients, {rounds} rounds each...")
+            samples = run_multi_client_sessions(
+                host=args.host,
+                port=args.port,
+                server_hostname=server_hostname,
+                rounds=rounds,
+                clients=clients,
+                stagger_ms=stagger_ms,
+            )
     except ConnectionRefusedError:
         print(
             f"ERROR: Connection refused — the server is not running on "

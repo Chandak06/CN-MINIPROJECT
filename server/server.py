@@ -8,6 +8,7 @@ trusted local network. For secure deployments use secure_server.py, which
 wraps the same MasterClock over a TLS/TCP connection.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import os
 import random
 import socket
@@ -41,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--ntp-server", default="time.google.com")
+    parser.add_argument("--max-workers", type=int, default=max(8, (os.cpu_count() or 1) * 4))
+    parser.add_argument("--max-queue", type=int, default=500)
     return parser.parse_args()
 
 
@@ -55,6 +58,10 @@ def main() -> None:
 
     print("Distributed Clock Synchronization UDP Server Running...")
     print(f"Listening on {args.host}:{args.port}")
+    print(f"Thread pool: workers={args.max_workers}, queue={args.max_queue}")
+
+    # Cap queued work to avoid unbounded growth during bursts.
+    pending_slots = threading.BoundedSemaphore(max(1, args.max_workers + args.max_queue))
 
     def handle_client(data: bytes, addr: tuple[str, int], t2: float) -> None:
         try:
@@ -75,13 +82,24 @@ def main() -> None:
             print(f"Responded to {addr} id={request_id} source={clock.status()}")
         except Exception as exc:
             print(f"Error handling request from {addr}: {exc}")
+        finally:
+            pending_slots.release()
 
     try:
-        while True:
-            data, addr = server_socket.recvfrom(BUFFER_SIZE)
-            t2 = clock.now()
-            worker = threading.Thread(target=handle_client, args=(data, addr, t2), daemon=True)
-            worker.start()
+        with ThreadPoolExecutor(max_workers=max(1, args.max_workers)) as pool:
+            while True:
+                data, addr = server_socket.recvfrom(BUFFER_SIZE)
+                t2 = clock.now()
+
+                if not pending_slots.acquire(blocking=False):
+                    print(f"Overloaded, dropping packet from {addr}")
+                    continue
+
+                try:
+                    pool.submit(handle_client, data, addr, t2)
+                except RuntimeError:
+                    print("Worker pool is shutting down; dropping packet")
+                    pending_slots.release()
     except KeyboardInterrupt:
         print("\nServer stopped by user.")
     finally:
