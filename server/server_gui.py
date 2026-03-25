@@ -124,6 +124,7 @@ class ClockSyncGUI(tk.Tk):
         style.configure("StatusRed.TLabel", background=panel, foreground="#F97373", font=("Segoe UI Semibold", 10))
         style.configure("TLabelframe", background=panel, foreground=fg)
         style.configure("TLabelframe.Label", background=panel, foreground=fg, font=("Segoe UI Semibold", 10))
+        style.configure("TEntry", fieldbackground="#0B1D30", foreground=fg, insertcolor=fg)
         style.configure("TNotebook", background=bg, borderwidth=0)
         style.configure("TNotebook.Tab", font=("Segoe UI Semibold", 10), padding=(14, 8))
         style.configure("Treeview", rowheight=24, fieldbackground="#0B1D30", background="#0B1D30", foreground=fg)
@@ -286,10 +287,12 @@ class ClockSyncGUI(tk.Tk):
         ttk.Label(outer, textvariable=self.proof_latest_var, style="PanelLabel.TLabel").pack(anchor="w", pady=(2, 10))
 
         self.proof_figure = Figure(figsize=(9.4, 5.0), dpi=100)
+        self.proof_figure.set_facecolor("#10243A")
         self.proof_ax_offset = self.proof_figure.add_subplot(311)
         self.proof_ax_delay = self.proof_figure.add_subplot(312)
         self.proof_ax_accuracy = self.proof_figure.add_subplot(313)
         self.proof_canvas = FigureCanvasTkAgg(self.proof_figure, master=outer)
+        self.proof_canvas.get_tk_widget().configure(bg="#10243A", highlightthickness=0)
         self.proof_canvas.get_tk_widget().pack(fill="both", expand=True)
         self._redraw_proof_plot()
 
@@ -774,7 +777,7 @@ class ClockSyncGUI(tk.Tk):
         for ax in axes:
             ax.clear()
             ax.set_facecolor("#0B1D30")
-            ax.tick_params(colors="#DDE9F7")
+            ax.tick_params(axis="both", colors="#E6F0FA", labelcolor="#E6F0FA")
             ax.grid(alpha=0.25, color="#4A6D90")
             for spine in ax.spines.values():
                 spine.set_color("#55799D")
@@ -793,6 +796,7 @@ class ClockSyncGUI(tk.Tk):
         self.proof_ax_accuracy.set_ylabel("Corrected Error (s)", color="#E6F0FA")
         self.proof_ax_accuracy.set_xlabel("Round", color="#E6F0FA")
 
+        self.proof_figure.patch.set_facecolor("#10243A")
         self.proof_figure.tight_layout(pad=1.5)
         self.proof_canvas.draw_idle()
 
