@@ -2,11 +2,11 @@ import threading
 import time
 from typing import Optional
 
-from ntp_sync import compute_reference_offset, fetch_reference_time
+from ntp_sync import PRIMARY_NTP_SERVER, compute_reference_offset, fetch_reference_time
 
 
 class MasterClock:
-    def __init__(self, ntp_server: str = "time.google.com", sync_interval: int = 30) -> None:
+    def __init__(self, ntp_server: str = PRIMARY_NTP_SERVER, sync_interval: int = 30) -> None:
         self.ntp_server = ntp_server
         self.sync_interval = sync_interval
         self._offset = 0.0

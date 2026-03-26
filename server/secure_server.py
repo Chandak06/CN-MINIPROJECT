@@ -27,6 +27,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from time_manager import MasterClock
+from ntp_sync import PRIMARY_NTP_SERVER
 from utils.packet_format import (
     build_time_reply,
     decode_packet,
@@ -46,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Secure TLS time sync server")
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument("--ntp-server", default="time.google.com")
+    parser.add_argument("--ntp-server", default=PRIMARY_NTP_SERVER)
     parser.add_argument("--max-workers", type=int, default=max(8, (os.cpu_count() or 1) * 4))
     parser.add_argument("--max-queue", type=int, default=100)
     parser.add_argument("--backlog", type=int, default=50)

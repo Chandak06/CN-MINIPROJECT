@@ -18,7 +18,10 @@ LOGGER = logging.getLogger(__name__)
 NTP_WARNING_INTERVAL_SECONDS = 300
 _warning_state = {"at": 0.0, "key": ""}
 
+PRIMARY_NTP_SERVER = "pool.ntp.org"
+
 DEFAULT_NTP_FALLBACKS = (
+    PRIMARY_NTP_SERVER,
     "time.google.com",
     "time.cloudflare.com",
     "time.windows.com",
@@ -36,14 +39,23 @@ def _candidate_servers(ntp_server: str) -> list[str]:
     if not raw or raw.lower() in {"none", "off", "local", "system"}:
         return []
 
-    # Support comma-separated hostnames from CLI/GUI and append known public fallbacks.
-    primary = [part.strip() for part in raw.split(",") if part.strip()]
-    seen = set(primary)
+    configured = [part.strip() for part in raw.split(",") if part.strip()]
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(server: str) -> None:
+        if server and server not in seen:
+            candidates.append(server)
+            seen.add(server)
+
+    # Always prefer pool.ntp.org first, then any configured extra NTP servers,
+    # and only then fall back to the remaining public NTP options.
+    add(PRIMARY_NTP_SERVER)
+    for server in configured:
+        add(server)
     for fallback in DEFAULT_NTP_FALLBACKS:
-        if fallback not in seen:
-            primary.append(fallback)
-            seen.add(fallback)
-    return primary
+        add(fallback)
+    return candidates
 
 
 def _should_emit_warning(key: str) -> bool:
@@ -76,7 +88,7 @@ def _fetch_https_time(timeout: int) -> tuple[Optional[float], str, list[str]]:
     return None, "", errors
 
 
-def fetch_reference_time(ntp_server: str = "time.google.com", timeout: int = 2) -> tuple[Optional[float], str]:
+def fetch_reference_time(ntp_server: str = PRIMARY_NTP_SERVER, timeout: int = 2) -> tuple[Optional[float], str]:
     """Return (reference_time, source_label)."""
     candidates = _candidate_servers(ntp_server)
     if not candidates:
@@ -114,7 +126,7 @@ def fetch_reference_time(ntp_server: str = "time.google.com", timeout: int = 2) 
     return None, "system-time (ntp unavailable)"
 
 
-def fetch_ntp_time(ntp_server: str = "time.google.com", timeout: int = 2) -> Optional[float]:
+def fetch_ntp_time(ntp_server: str = PRIMARY_NTP_SERVER, timeout: int = 2) -> Optional[float]:
     reference_time, _ = fetch_reference_time(ntp_server=ntp_server, timeout=timeout)
     return reference_time
 

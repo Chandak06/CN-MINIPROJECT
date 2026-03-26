@@ -23,6 +23,7 @@ from matplotlib.figure import Figure
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CERT_FILE = os.path.join(PROJECT_ROOT, "security", "cert.pem")
 KEY_FILE = os.path.join(PROJECT_ROOT, "security", "key.pem")
+DEFAULT_NTP_SERVER = "pool.ntp.org"
 
 
 @dataclass
@@ -224,13 +225,13 @@ class ClockSyncGUI(tk.Tk):
 
         self.udp_host_var = tk.StringVar(value="0.0.0.0")
         self.udp_port_var = tk.StringVar(value="5005")
-        self.udp_ntp_var = tk.StringVar(value="time.google.com")
+        self.udp_ntp_var = tk.StringVar(value=DEFAULT_NTP_SERVER)
         self.udp_workers_var = tk.StringVar(value="32")
         self.udp_queue_var = tk.StringVar(value="500")
 
         self.tls_host_var = tk.StringVar(value="0.0.0.0")
         self.tls_port_var = tk.StringVar(value="6000")
-        self.tls_ntp_var = tk.StringVar(value="time.google.com")
+        self.tls_ntp_var = tk.StringVar(value=DEFAULT_NTP_SERVER)
         self.tls_workers_var = tk.StringVar(value="32")
         self.tls_queue_var = tk.StringVar(value="200")
         self.tls_backlog_var = tk.StringVar(value="100")
@@ -462,6 +463,37 @@ class ClockSyncGUI(tk.Tk):
     def _append_log(self, message: str) -> None:
         self.log_queue.put(message.rstrip("\n"))
 
+    def _increment_counter(self, counter_var: tk.StringVar, amount: int = 1) -> None:
+        try:
+            current = int(counter_var.get())
+        except (TypeError, ValueError):
+            current = 0
+        counter_var.set(str(current + amount))
+
+    def _record_tls_client_failure(self, context: str, message: str) -> None:
+        self._increment_counter(self.kpi_tls_fail_var)
+        self._append_log(f"{context}: {message}")
+
+    def _is_stress_tls_failure_line(self, line: str) -> bool:
+        stripped = line.strip()
+        if stripped.startswith("[Stress] ERROR:"):
+            return True
+        if not stripped.startswith("[Stress] Client "):
+            return False
+
+        lowered = stripped.lower()
+        error_tokens = (
+            "[winerror",
+            "[errno",
+            "refused",
+            "timed out",
+            "ssl",
+            "certificate",
+            "eof",
+            "network error",
+        )
+        return any(token in lowered for token in error_tokens)
+
     def _drain_log_queue(self) -> None:
         while True:
             try:
@@ -478,13 +510,13 @@ class ClockSyncGUI(tk.Tk):
 
     def _ingest_log_line(self, line: str) -> None:
         if "Responded to" in line:
-            self.kpi_requests_var.set(str(int(self.kpi_requests_var.get()) + 1))
+            self._increment_counter(self.kpi_requests_var)
         if "Client error" in line or "Error handling request" in line:
-            self.kpi_errors_var.set(str(int(self.kpi_errors_var.get()) + 1))
+            self._increment_counter(self.kpi_errors_var)
         if "Overloaded, dropping" in line:
-            self.kpi_drops_var.set(str(int(self.kpi_drops_var.get()) + 1))
-        if "TLS handshake failed" in line:
-            self.kpi_tls_fail_var.set(str(int(self.kpi_tls_fail_var.get()) + 1))
+            self._increment_counter(self.kpi_drops_var)
+        if "TLS handshake failed for" in line or self._is_stress_tls_failure_line(line):
+            self._increment_counter(self.kpi_tls_fail_var)
 
     def _run_subprocess(self, key: str, name: str, args: list[str], persistent: bool = True) -> None:
         if key in self.processes and self.processes[key].process.poll() is None:
@@ -727,6 +759,7 @@ class ClockSyncGUI(tk.Tk):
 
     def _on_live_time_sync_error(self, message: str) -> None:
         self.live_time_status_var.set("Sync failed; using local clock")
+        self._record_tls_client_failure("[Live Time] TLS sync failed", message)
         messagebox.showerror("Live Time Sync Failed", message)
 
     def reset_live_time_to_local(self) -> None:
@@ -810,7 +843,7 @@ class ClockSyncGUI(tk.Tk):
 
                 self.after(0, self._append_proof_sample, round_id, offset, delay, corrected_error)
             except Exception as exc:
-                self.after(0, self._append_log, f"[Proof] Round {round_id} failed: {exc}")
+                self.after(0, self._on_proof_round_failed, round_id, str(exc))
 
             slept = 0.0
             while slept < interval and not self.proof_stop_event.is_set():
@@ -829,6 +862,9 @@ class ClockSyncGUI(tk.Tk):
             f"Latest round {round_id}: offset={offset:.6f}s delay={delay:.6f}s corrected_error={corrected_error:.6f}s"
         )
         self._redraw_proof_plot()
+
+    def _on_proof_round_failed(self, round_id: int, message: str) -> None:
+        self._record_tls_client_failure(f"[Proof] Round {round_id} failed", message)
 
     def _proof_finished(self) -> None:
         if self.proof_stop_event.is_set():
@@ -1014,7 +1050,7 @@ class ClockSyncGUI(tk.Tk):
             "--port",
             port,
             "--ntp-server",
-            self.udp_ntp_var.get().strip() or "time.google.com",
+            self.udp_ntp_var.get().strip() or DEFAULT_NTP_SERVER,
             "--max-workers",
             str(self._parse_positive_int(self.udp_workers_var.get().strip(), 32)),
             "--max-queue",
@@ -1049,7 +1085,7 @@ class ClockSyncGUI(tk.Tk):
             "--port",
             port,
             "--ntp-server",
-            self.tls_ntp_var.get().strip() or "time.google.com",
+            self.tls_ntp_var.get().strip() or DEFAULT_NTP_SERVER,
             "--max-workers",
             str(self._parse_positive_int(self.tls_workers_var.get().strip(), 32)),
             "--max-queue",
