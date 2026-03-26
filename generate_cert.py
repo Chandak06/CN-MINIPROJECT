@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument(
         "--ips",
         nargs="+",
-        default=["127.0.0.1", "192.168.56.1","192.168.29.117","10.1.16.198"],
+        default=["127.0.0.1", "192.168.56.1","192.168.29.117","10.1.16.198","10.222.173.175"],
         help="IPv4 addresses to include in SAN (space-separated)",
     )
     parser.add_argument(
