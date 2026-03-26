@@ -10,7 +10,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa        # RSA key pair 
 # Determine the security/ directory relative to this script regardless of where it is run from
 SECURITY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "security")
 
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate self-signed TLS cert for secure clock sync")
     parser.add_argument(
