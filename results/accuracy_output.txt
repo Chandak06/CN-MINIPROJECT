@@ -1,0 +1,8 @@
+--- Accuracy Metrics ---
+Samples      : 500
+Mean Offset  : -0.233234s
+Offset Std   : 0.134245s
+Mean Delay   : 0.001161s
+Delay Std    : 0.002248s
+Min Delay    : 0.000425s
+
