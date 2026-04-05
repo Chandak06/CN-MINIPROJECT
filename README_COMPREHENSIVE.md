@@ -8,9 +8,13 @@ A comprehensive distributed clock synchronization system using low-level socket 
 - [System Requirements](#system-requirements)
 - [Installation](#installation)
 - [Usage](#usage)
+- [System Architecture Diagram](#system-architecture-diagram)
 - [Architecture](#architecture)
 - [How It Works](#how-it-works)
 - [Synchronization Algorithm](#synchronization-algorithm)
+- [User Interface & Visual Proof](#user-interface--visual-proof)
+- [Performance Visualization](#performance-visualization)
+- [Security Features](#security-features)
 - [Performance Analysis](#performance-analysis)
 - [Code Snippets](#code-snippets)
 - [Configuration](#configuration)
@@ -236,6 +240,52 @@ python analysis/accuracy_evaluator.py
 python analysis/plot_results.py
 ```
 
+## System Architecture Diagram
+
+### High-Level System Design
+
+The distributed clock synchronization system follows a client-server model with NTP-based time reference:
+
+```
+                    ┌──────────────────────┐
+                    │   NTP Server         │
+                    │  (pool.ntp.org)      │
+                    └──────────┬───────────┘
+                               │
+                    Fetch Accurate Time
+                               │
+                               ↓
+                    ┌──────────────────────────┐
+                    │ Master Clock Server      │
+                    │ (secure_server.py)       │
+                    │ • TLS Enabled            │
+                    │ • Thread Pool            │
+                    └──────────┬───────────────┘
+                               │
+                TLS over TCP (Secure Channel)
+                               │
+        ┌──────────────┬──────┴──────┬──────────────┐
+        ↓              ↓             ↓              ↓
+    ┌────────┐    ┌────────┐   ┌────────┐    ┌────────┐
+    │Client 1│    │Client 2│   │Client 3│    │Client N│
+    │(TLS)   │    │(TLS)   │   │(TLS)   │    │(TLS)   │
+    │Sends T1│    │Sends T1│   │Sends T1│    │Sends T1│
+    │Receives│    │Receives│   │Receives│    │Receives│
+    │T2, T3  │    │T2, T3  │   │T2, T3  │    │T2, T3  │
+    └────────┘    └────────┘   └────────┘    └────────┘
+        │              │            │             │
+        └──────────────┴────────────┴─────────────┘
+                       │
+                       ↓
+        ┌──────────────────────────────┐
+        │ CSV / Analysis Module        │
+        │ (results/ + analysis/)       │
+        │ • Offset Calculation         │
+        │ • Delay Measurement          │
+        │ • Graph Generation           │
+        └──────────────────────────────┘
+```
+
 ## Architecture
 
 ### System Overview
@@ -422,6 +472,220 @@ Client                           Server
 - **Synchronization Error:** Deviation after applying server's recommended offset
 - **Drift Rate:** Rate of clock drift expressed in PPM (parts per million)
 - **Convergence Time:** Time required for client clock to converge with server
+
+## User Interface & Visual Proof
+
+### Monitoring Console - Dashboard Tab
+
+**Overview:**
+The server monitoring dashboard provides real-time visibility into system performance metrics including response rates, errors, and TLS connection failures.
+
+**Key Metrics:**
+- **Responses:** Total successful synchronization responses sent to clients
+- **Errors:** Number of synchronization request failures
+- **Overload Drops:** Requests dropped due to server overload
+- **TLS Failures:** Failed SSL/TLS handshakes or encryption errors
+
+**Features:**
+- Real-time metric updates
+- Live event logging
+- UDP and TLS server control buttons
+- Status indicators for server health
+
+### Server Control Panel
+
+**Configuration Options:**
+- **Host:** Server binding address (0.0.0.0)
+- **Port:** Listen port (UDP: 5005, TLS: 6000)
+- **NTP Server:** Server for fetching reference time (pool.ntp.org)
+- **Max Workers:** Thread pool size for handling concurrent clients
+- **Max Queue:** Maximum pending connections backlog
+
+**Server Management:**
+- Start/Stop UDP Server for backup synchronization
+- Start/Stop TLS Server for secure primary mode
+- Toggle between security modes
+- Adjust server parameters on-the-fly
+
+### Client Interface - Sync Tab
+
+**Connection Settings:**
+- **Protocol:** TLS/TCP for secure communication
+- **Server Host:** Master clock server IP address
+- **Server Port:** Connection port (default: 6000)
+- **TLS Hostname:** Server certificate verification hostname
+- **Rounds:** Number of synchronization iterations
+- **Interval Between Rounds:** Configurable delay (in seconds)
+
+**Synchronization Samples Table:**
+Displays detailed per-round metrics:
+- **Round:** Iteration number
+- **Server Time:** Timestamp from master clock
+- **Offset (s):** Time difference (client_time - server_time)
+- **Delay (s):** Network round-trip latency
+- **Client T4 (local):** Client's adjusted local timestamp
+
+### Live Time Synchronization Display
+
+**Server Time Source:**
+Shows synchronized time from NTP-based master clock:
+- **Local Clock:** Client's system time (unadjusted)
+- **NTP Server Time:** Reference time from external NTP source
+- **Corrected Time:** Client time after offset application
+- **Status:** Synchronization status with offset and source information
+
+**Example Output:**
+```
+Local Clock:      2026-04-02 20:22:30.962
+NTP Server Time:  2026-04-02 20:22:30.922
+Source:           ntp-time.google.com
+Corrected Time:   2026-04-02 20:22:30.922
+Status:           Synced (delay: 0.0007s, offset: -0.0401s, source: ntp-time.google.com)
+```
+
+## Performance Visualization
+
+### Visual Proof Capture Tab
+
+**Proof Capture Features:**
+- **Server Host:** Evidence of server connection
+- **Server Port:** Connection endpoint documentation
+- **TLS Hostname:** Security verification record
+- **Rounds:** Number of synchronization samples captured
+- **Interval (seconds):** Time between sync operations
+
+**Generated Graphs:**
+1. **Clock Drift Proxy: Offset Over Rounds**
+   - Shows offset variation across synchronization rounds
+   - Demonstrates clock correction effectiveness
+   - Indicates system stability
+
+2. **Delay Trend**
+   - Network latency measurements across rounds
+   - Identifies network congestion or interference
+   - Validates consistent communication channel
+
+3. **Sync Accuracy Over Time**
+   - Convergence efficiency metric
+   - Shows if errors are increasing or decreasing
+   - Critical for validating synchronization algorithm
+
+### Stress Test Results
+
+**Multi-Client Stress Simulation:**
+- **Concurrent Clients:** Number of simultaneous client connections being tested
+- **Rounds per Client:** Synchronization iterations per client
+- **Launch Stagger (ms):** Delay between client connection initiations
+- **Output CSV:** Results file path for analysis
+
+**Performance Metrics Displayed:**
+- **Success Rate:** Percentage of successful synchronizations (target: 100%)
+- **Throughput:** Samples processed per second (samples/s)
+- **Mean Delay:** Average network latency across all requests
+
+**Stress Test Sample Output:**
+```
+Success Rate:  100.0%
+Throughput:    23.77 samples/s
+Mean Delay:    0.000969s
+```
+
+This demonstrates:
+- Zero synchronization failures under load
+- Consistent throughput delivery
+- Sub-millisecond network latency
+
+### Analysis Tab - Drift & Accuracy Metrics
+
+**Drift Estimator:**
+Calculates clock drift rate from synchronization samples:
+```
+Estimated drift rate: 0.000874081 sec/sec
+```
+- Represents PPM (parts per million) deviation
+- Shows how much the client's local clock deviates
+- Used for system health assessment
+
+**Accuracy Evaluator:**
+Comprehensive accuracy metrics:
+```
+--- Accuracy Metrics ---
+Samples              : 10
+Mean Offset          : -0.022275s
+Offset Std Dev       : 0.004683s
+Mean Delay           : 0.042335s
+Delay Std Dev        : 0.009425s
+Min Delay            : 0.028900s
+```
+
+**Interpretation:**
+- **Mean Offset:** Average time difference (ideally near 0)
+- **Offset Std Dev:** Variance in synchronization (lower is better)
+- **Mean Delay:** Average network latency
+- **Delay Std Dev:** Network jitter (consistency measure)
+
+### Generated Plots
+
+**Clock Offset Trend Graph:**
+- X-axis: Synchronization rounds
+- Y-axis: Clock offset in seconds
+- Trend line showing convergence pattern
+- Multiple rounds showing stability
+
+**Network Delay Trend Graph:**
+- X-axis: Synchronization rounds
+- Y-axis: Delay measurements in seconds
+- Shows consistent network performance
+- Validates system responsiveness
+
+## Security Features
+
+### Why TLS Matters
+
+**Comprehensive Security Comparison Table:**
+
+| Security Aspect | UDP (Insecure) | TLS/TCP (Secure) |
+|---|---|---|
+| **Authentication** | No server identity proof | Certificate-backed server identity |
+| **Tampering** | Packets can be modified in transit | Integrity checks detect modified packets |
+| **Spoofing** | False server can reply with forged time | Hostname plus cert validation blocks spoofed cert |
+| **Confidentiality** | Timestamps visible to observers | Encrypted session hides traffic |
+| **MITM Impact** | Attacker can inject wrong time | Encrypted sessions hide traffic |
+| **Operational Advice** | Use only for trusted lab LAN | Use for production or evaluation demos |
+
+**Security Threat Scenarios:**
+
+1. **Replay Attack:**
+   - **UDP Mode:** Attacker replays old NTP packets causing stale offsets
+   - **TLS Mode:** TLS Integrity checks make modified packets fail
+
+2. **On-path Manipulation:**
+   - **UDP Mode:** Without TLS, attacker modifies T2/T3 and inflates drift estimates
+   - **TLS Mode:** Client verifies certificate SAN and trust chain before accepting data
+
+3. **Rogue Time Server:**
+   - **UDP Mode:** In UDS mode, client may trust a forged responder
+   - **TLS Mode:** Client verifies certificate SAN and trust chain before accepting data
+
+### TLS Implementation Details
+
+**Server-Side SSL/TLS:**
+- Protocol: TLS 1.2+ (minimum 256-bit encryption)
+- Certificate: Self-signed or CA-signed with SAN support
+- Cipher Suites: Strong authentication and encryption algorithms
+- Session Management: Secure session establishment and termination
+
+**Client-Side Certificate Verification:**
+- Hostname verification enabled
+- Certificate chain validation enforced
+- CA certificate validation (CERT_REQUIRED mode)
+- TLS version negotiation to strongest available
+
+**Attack Prevention:**
+- Certificate pinning for known servers
+- Session hijacking prevention through TLS
+- Replay attack mitigation via sequence numbers
+- Men-in-the-middle protection through encryption
 
 ## Performance Analysis
 
